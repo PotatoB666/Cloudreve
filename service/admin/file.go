@@ -2,13 +2,14 @@ package admin
 
 import (
 	"context"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/filesystem"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/service/explorer"
-	"github.com/gin-gonic/gin"
 	"strings"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/service/explorer"
+	"github.com/gin-gonic/gin"
 )
 
 // FileService 文件ID服务
@@ -53,9 +54,7 @@ func (service *ListFolderService) List(c *gin.Context) serializer.Response {
 		}
 
 		return serializer.Response{
-			Data: map[string]interface{}{
-				"objects": res,
-			},
+			Data: serializer.BuildObjectList(0, res, nil),
 		}
 
 	}
@@ -81,9 +80,7 @@ func (service *ListFolderService) List(c *gin.Context) serializer.Response {
 	}
 
 	return serializer.Response{
-		Data: map[string]interface{}{
-			"objects": res,
-		},
+		Data: serializer.BuildObjectList(0, res, nil),
 	}
 }
 

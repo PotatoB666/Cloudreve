@@ -161,3 +161,30 @@ func TestGetDownloadsByStatusAndUser(t *testing.T) {
 		asserts.Len(res, 2)
 	}
 }
+
+func TestDownload_Delete(t *testing.T) {
+	asserts := assert.New(t)
+	share := Download{}
+
+	{
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE(.+)").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+		err := share.Delete()
+		asserts.NoError(mock.ExpectationsWereMet())
+		asserts.NoError(err)
+	}
+
+}
+
+func TestDownload_GetNodeID(t *testing.T) {
+	a := assert.New(t)
+	record := Download{}
+
+	// compatible with 3.4
+	a.EqualValues(1, record.GetNodeID())
+
+	record.NodeID = 5
+	a.EqualValues(5, record.GetNodeID())
+}

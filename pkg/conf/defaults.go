@@ -12,9 +12,10 @@ var RedisConfig = &redis{
 
 // DatabaseConfig 数据库配置
 var DatabaseConfig = &database{
-	Type:   "UNSET",
-	DBFile: "cloudreve.db",
-	Port:   3306,
+	Type:    "UNSET",
+	Charset: "utf8",
+	DBFile:  "cloudreve.db",
+	Port:    3306,
 }
 
 // SystemConfig 系统公用配置
@@ -43,16 +44,20 @@ var CaptchaConfig = &captcha{
 var CORSConfig = &cors{
 	AllowOrigins:     []string{"UNSET"},
 	AllowMethods:     []string{"PUT", "POST", "GET", "OPTIONS"},
-	AllowHeaders:     []string{"Cookie", "X-Policy", "Authorization", "Content-Length", "Content-Type", "X-Path", "X-FileName"},
+	AllowHeaders:     []string{"Cookie", "X-Cr-Policy", "Authorization", "Content-Length", "Content-Type", "X-Cr-Path", "X-Cr-FileName"},
 	AllowCredentials: false,
 	ExposeHeaders:    nil,
 }
 
 // ThumbConfig 缩略图配置
 var ThumbConfig = &thumb{
-	MaxWidth:   400,
-	MaxHeight:  300,
-	FileSuffix: "._thumb",
+	MaxWidth:      400,
+	MaxHeight:     300,
+	FileSuffix:    "._thumb",
+	MaxTaskCount:  -1,
+	EncodeMethod:  "jpg",
+	GCAfterGen:    false,
+	EncodeQuality: 85,
 }
 
 // SlaveConfig 从机配置
@@ -68,5 +73,5 @@ var SSLConfig = &ssl{
 }
 
 var UnixConfig = &unix{
-    Listen: "",
+	Listen: "",
 }

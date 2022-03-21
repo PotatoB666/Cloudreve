@@ -1,7 +1,7 @@
 package conf
 
 import (
-	"github.com/HFO4/cloudreve/pkg/util"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/go-ini/ini"
 	"gopkg.in/go-playground/validator.v9"
 )
@@ -16,6 +16,7 @@ type database struct {
 	TablePrefix string
 	DBFile      string
 	Port        int
+	Charset     string
 }
 
 // system 系统通用配置
@@ -34,7 +35,7 @@ type ssl struct {
 }
 
 type unix struct {
-    Listen string
+	Listen string
 }
 
 // slave 作为slave存储端配置
@@ -69,9 +70,13 @@ type redis struct {
 
 // 缩略图 配置
 type thumb struct {
-	MaxWidth   uint
-	MaxHeight  uint
-	FileSuffix string `validate:"min=1"`
+	MaxWidth      uint
+	MaxHeight     uint
+	FileSuffix    string `validate:"min=1"`
+	MaxTaskCount  int
+	EncodeMethod  string `validate:"eq=jpg|eq=png"`
+	EncodeQuality int    `validate:"gte=1,lte=100"`
+	GCAfterGen    bool
 }
 
 // 跨域配置
@@ -122,15 +127,15 @@ func Init(path string) {
 	}
 
 	sections := map[string]interface{}{
-		"Database":  DatabaseConfig,
-		"System":    SystemConfig,
-		"SSL":       SSLConfig,
-		"Unix":      UnixConfig,
-		"Captcha":   CaptchaConfig,
-		"Redis":     RedisConfig,
-		"Thumbnail": ThumbConfig,
-		"CORS":      CORSConfig,
-		"Slave":     SlaveConfig,
+		"Database":   DatabaseConfig,
+		"System":     SystemConfig,
+		"SSL":        SSLConfig,
+		"UnixSocket": UnixConfig,
+		"Captcha":    CaptchaConfig,
+		"Redis":      RedisConfig,
+		"Thumbnail":  ThumbConfig,
+		"CORS":       CORSConfig,
+		"Slave":      SlaveConfig,
 	}
 	for sectionName, sectionStruct := range sections {
 		err = mapSection(sectionName, sectionStruct)

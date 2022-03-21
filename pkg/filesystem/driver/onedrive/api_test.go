@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/request"
-	"github.com/stretchr/testify/assert"
-	testMock "github.com/stretchr/testify/mock"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
+	"github.com/stretchr/testify/assert"
+	testMock "github.com/stretchr/testify/mock"
 )
 
 func TestRequest(t *testing.T) {
@@ -164,6 +166,82 @@ func TestClient_GetRequestURL(t *testing.T) {
 	{
 		client.Endpoints.EndpointURL = string([]byte{0x7f})
 		asserts.Equal("", client.getRequestURL("123"))
+	}
+
+	// 使用DriverResource
+	{
+		client.Endpoints.EndpointURL = "https://graph.microsoft.com/v1.0"
+		asserts.Equal("https://graph.microsoft.com/v1.0/me/drive/123", client.getRequestURL("123"))
+	}
+
+	// 不使用DriverResource
+	{
+		client.Endpoints.EndpointURL = "https://graph.microsoft.com/v1.0"
+		asserts.Equal("https://graph.microsoft.com/v1.0/123", client.getRequestURL("123", WithDriverResource(false)))
+	}
+}
+
+func TestClient_GetSiteIDByURL(t *testing.T) {
+	asserts := assert.New(t)
+	client, _ := NewClient(&model.Policy{})
+	client.Credential.AccessToken = "AccessToken"
+
+	// 请求失败
+	{
+		client.Credential.ExpiresIn = 0
+		res, err := client.GetSiteIDByURL(context.Background(), "https://cquedu.sharepoint.com")
+		asserts.Error(err)
+		asserts.Empty(res)
+
+	}
+
+	// 返回未知响应
+	{
+		client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
+		clientMock := ClientMock{}
+		clientMock.On(
+			"Request",
+			"GET",
+			testMock.Anything,
+			testMock.Anything,
+			testMock.Anything,
+		).Return(&request.Response{
+			Err: nil,
+			Response: &http.Response{
+				StatusCode: 200,
+				Body:       ioutil.NopCloser(strings.NewReader(`???`)),
+			},
+		})
+		client.Request = clientMock
+		res, err := client.GetSiteIDByURL(context.Background(), "https://cquedu.sharepoint.com")
+		clientMock.AssertExpectations(t)
+		asserts.Error(err)
+		asserts.Empty(res)
+	}
+
+	// 返回正常
+	{
+		client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
+		clientMock := ClientMock{}
+		clientMock.On(
+			"Request",
+			"GET",
+			testMock.Anything,
+			testMock.Anything,
+			testMock.Anything,
+		).Return(&request.Response{
+			Err: nil,
+			Response: &http.Response{
+				StatusCode: 200,
+				Body:       ioutil.NopCloser(strings.NewReader(`{"id":"123321"}`)),
+			},
+		})
+		client.Request = clientMock
+		res, err := client.GetSiteIDByURL(context.Background(), "https://cquedu.sharepoint.com")
+		clientMock.AssertExpectations(t)
+		asserts.NoError(err)
+		asserts.NotEmpty(res)
+		asserts.Equal("123321", res)
 	}
 }
 
@@ -457,7 +535,7 @@ func TestClient_UploadChunk(t *testing.T) {
 
 	// 最后分片，第一次失败，重试后成功
 	{
-		cache.Set("setting_onedrive_chunk_retries", "1", 0)
+		cache.Set("setting_chunk_retries", "1", 0)
 		client.Credential.ExpiresIn = 0
 		go func() {
 			time.Sleep(time.Duration(2) * time.Second)
@@ -498,11 +576,12 @@ func TestClient_Upload(t *testing.T) {
 	client, _ := NewClient(&model.Policy{})
 	client.Credential.AccessToken = "AccessToken"
 	client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
+	ctx := context.WithValue(context.Background(), fsctx.DisableOverwrite, true)
 
 	// 小文件，简单上传，失败
 	{
 		client.Credential.ExpiresIn = 0
-		err := client.Upload(context.Background(), "123.jpg", 3, strings.NewReader("123"))
+		err := client.Upload(ctx, "123.jpg", 3, strings.NewReader("123"))
 		asserts.Error(err)
 	}
 
@@ -562,7 +641,7 @@ func TestClient_SimpleUpload(t *testing.T) {
 	client, _ := NewClient(&model.Policy{})
 	client.Credential.AccessToken = "AccessToken"
 	client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
-	cache.Set("setting_onedrive_chunk_retries", "1", 0)
+	cache.Set("setting_chunk_retries", "1", 0)
 
 	// 请求失败，并重试
 	{
@@ -572,7 +651,7 @@ func TestClient_SimpleUpload(t *testing.T) {
 		asserts.Nil(res)
 	}
 
-	cache.Set("setting_onedrive_chunk_retries", "0", 0)
+	cache.Set("setting_chunk_retries", "0", 0)
 	// 返回未知响应
 	{
 		client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
@@ -887,7 +966,7 @@ func TestClient_GetThumbURL(t *testing.T) {
 			Err: nil,
 			Response: &http.Response{
 				StatusCode: 200,
-				Body:       ioutil.NopCloser(strings.NewReader(`{"value":[{"c1x1_Crop":{"url":"thumb"}}]}`)),
+				Body:       ioutil.NopCloser(strings.NewReader(`{"value":[{"large":{"url":"thumb"}}]}`)),
 			},
 		})
 		client.Request = clientMock

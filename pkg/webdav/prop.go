@@ -10,10 +10,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/HFO4/cloudreve/pkg/filesystem"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
 )
 
 type FileInfo interface {
@@ -187,7 +188,7 @@ func props(ctx context.Context, fs *filesystem.FileSystem, ls LockSystem, fi Fil
 		}
 		// Otherwise, it must either be a live property or we don't know it.
 		if prop := liveProps[pn]; prop.findFn != nil && (prop.dir || !isDir) {
-			innerXML, err := prop.findFn(ctx, fs, ls, "", fi)
+			innerXML, err := prop.findFn(ctx, fs, ls, fi.GetName(), fi)
 			if err != nil {
 				return nil, err
 			}

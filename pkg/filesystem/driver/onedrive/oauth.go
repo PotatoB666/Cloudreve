@@ -3,14 +3,15 @@ package onedrive
 import (
 	"context"
 	"encoding/json"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/request"
-	"github.com/HFO4/cloudreve/pkg/util"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 )
 
 // Error 实现error接口
@@ -122,7 +123,14 @@ func (client *Client) ObtainToken(ctx context.Context, opts ...Option) (*Credent
 }
 
 // UpdateCredential 更新凭证，并检查有效期
-func (client *Client) UpdateCredential(ctx context.Context) error {
+func (client *Client) UpdateCredential(ctx context.Context, isSlave bool) error {
+	if isSlave {
+		return client.fetchCredentialFromMaster(ctx)
+	}
+
+	GlobalMutex.Lock(client.Policy.ID)
+	defer GlobalMutex.Unlock(client.Policy.ID)
+
 	// 如果已存在凭证
 	if client.Credential != nil && client.Credential.AccessToken != "" {
 		// 检查已有凭证是否过期
@@ -159,10 +167,21 @@ func (client *Client) UpdateCredential(ctx context.Context) error {
 	client.Credential = credential
 
 	// 更新存储策略的 RefreshToken
-	client.Policy.UpdateAccessKey(credential.RefreshToken)
+	client.Policy.UpdateAccessKeyAndClearCache(credential.RefreshToken)
 
 	// 更新缓存
 	cache.Set("onedrive_"+client.ClientID, *credential, int(expires))
 
+	return nil
+}
+
+// UpdateCredential 更新凭证，并检查有效期
+func (client *Client) fetchCredentialFromMaster(ctx context.Context) error {
+	res, err := client.ClusterController.GetOneDriveToken(client.Policy.MasterID, client.Policy.ID)
+	if err != nil {
+		return err
+	}
+
+	client.Credential = &Credential{AccessToken: res}
 	return nil
 }

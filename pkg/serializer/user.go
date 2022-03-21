@@ -2,9 +2,11 @@ package serializer
 
 import (
 	"fmt"
-	"github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/hashid"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"github.com/duo-labs/webauthn/webauthn"
+	"time"
 )
 
 // CheckLogin 检查登录
@@ -17,25 +19,16 @@ func CheckLogin() Response {
 
 // User 用户序列化器
 type User struct {
-	ID             string `json:"id"`
-	Email          string `json:"user_name"`
-	Nickname       string `json:"nickname"`
-	Status         int    `json:"status"`
-	Avatar         string `json:"avatar"`
-	CreatedAt      int64  `json:"created_at"`
-	PreferredTheme string `json:"preferred_theme"`
-	Anonymous      bool   `json:"anonymous"`
-	Policy         policy `json:"policy"`
-	Group          group  `json:"group"`
-	Tags           []tag  `json:"tags"`
-}
-
-type policy struct {
-	SaveType       string   `json:"saveType"`
-	MaxSize        string   `json:"maxSize"`
-	AllowedType    []string `json:"allowedType"`
-	UploadURL      string   `json:"upUrl"`
-	AllowGetSource bool     `json:"allowSource"`
+	ID             string    `json:"id"`
+	Email          string    `json:"user_name"`
+	Nickname       string    `json:"nickname"`
+	Status         int       `json:"status"`
+	Avatar         string    `json:"avatar"`
+	CreatedAt      time.Time `json:"created_at"`
+	PreferredTheme string    `json:"preferred_theme"`
+	Anonymous      bool      `json:"anonymous"`
+	Group          group     `json:"group"`
+	Tags           []tag     `json:"tags"`
 }
 
 type group struct {
@@ -93,16 +86,9 @@ func BuildUser(user model.User) User {
 		Nickname:       user.Nick,
 		Status:         user.Status,
 		Avatar:         user.Avatar,
-		CreatedAt:      user.CreatedAt.Unix(),
+		CreatedAt:      user.CreatedAt,
 		PreferredTheme: user.OptionsSerialized.PreferredTheme,
 		Anonymous:      user.IsAnonymous(),
-		Policy: policy{
-			SaveType:       user.Policy.Type,
-			MaxSize:        fmt.Sprintf("%.2fmb", float64(user.Policy.MaxSize)/(1024*1024)),
-			AllowedType:    user.Policy.OptionsSerialized.FileType,
-			UploadURL:      user.Policy.GetUploadURL(),
-			AllowGetSource: user.Policy.IsOriginLinkEnable,
-		},
 		Group: group{
 			ID:                   user.GroupID,
 			Name:                 user.Group.Name,

@@ -3,15 +3,16 @@ package routers
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/HFO4/cloudreve/middleware"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/service/explorer"
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cloudreve/Cloudreve/v3/middleware"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/service/explorer"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestListDirectoryRoute(t *testing.T) {
@@ -72,7 +73,7 @@ func TestLocalFileUpload(t *testing.T) {
 					strings.NewReader("2333"),
 				)
 				req.Header.Add("Content-Length", "4")
-				req.Header.Add("X-FileName", "大地的%sfsf")
+				req.Header.Add("X-Cr-FileName", "大地的%sfsf")
 				return req
 			},
 			ExpectCode: 40002,
@@ -86,8 +87,8 @@ func TestLocalFileUpload(t *testing.T) {
 					strings.NewReader("2333"),
 				)
 				req.Header.Add("Content-Length", "4")
-				req.Header.Add("X-FileName", "TestFileUploadRoute.txt")
-				req.Header.Add("X-Path", "/")
+				req.Header.Add("X-Cr-FileName", "TestFileUploadRoute.txt")
+				req.Header.Add("X-Cr-Path", "/")
 				return req
 			},
 			ExpectCode: 0,

@@ -3,7 +3,6 @@ package onedrive
 import (
 	"encoding/gob"
 	"net/url"
-	"sync"
 )
 
 // RespError 接口返回错误
@@ -131,6 +130,15 @@ type OAuthError struct {
 	CorrelationID    string `json:"correlation_id"`
 }
 
+// Site SharePoint 站点信息
+type Site struct {
+	Description string `json:"description"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	WebUrl      string `json:"webUrl"`
+}
+
 func init() {
 	gob.Register(Credential{})
 }
@@ -139,5 +147,3 @@ func init() {
 func (chunk *Chunk) IsLast() bool {
 	return chunk.Total-chunk.Offset == chunk.ChunkSize
 }
-
-var callbackSignal sync.Map

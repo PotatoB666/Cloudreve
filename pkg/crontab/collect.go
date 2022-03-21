@@ -1,13 +1,16 @@
 package crontab
 
 import (
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/util"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 )
 
 func garbageCollect() {
@@ -51,4 +54,46 @@ func collectArchiveFile() {
 func collectCache(store *cache.MemoStore) {
 	util.Log().Debug("清理内存缓存")
 	store.GarbageCollect()
+}
+
+func uploadSessionCollect() {
+	placeholders := model.GetUploadPlaceholderFiles(0)
+
+	// 将过期的上传会话按照用户分组
+	userToFiles := make(map[uint][]uint)
+	for _, file := range placeholders {
+		_, sessionExist := cache.Get(filesystem.UploadSessionCachePrefix + *file.UploadSessionID)
+		if sessionExist {
+			continue
+		}
+
+		if _, ok := userToFiles[file.UserID]; !ok {
+			userToFiles[file.UserID] = make([]uint, 0)
+		}
+
+		userToFiles[file.UserID] = append(userToFiles[file.UserID], file.ID)
+	}
+
+	// 删除过期的会话
+	for uid, filesIDs := range userToFiles {
+		user, err := model.GetUserByID(uid)
+		if err != nil {
+			util.Log().Warning("上传会话所属用户不存在, %s", err)
+			continue
+		}
+
+		fs, err := filesystem.NewFileSystem(&user)
+		if err != nil {
+			util.Log().Warning("无法初始化文件系统, %s", err)
+			continue
+		}
+
+		if err = fs.Delete(context.Background(), []uint{}, filesIDs, false); err != nil {
+			util.Log().Warning("无法删除上传会话, %s", err)
+		}
+
+		fs.Recycle()
+	}
+
+	util.Log().Info("定时任务 [cron_recycle_upload_session] 执行完毕")
 }

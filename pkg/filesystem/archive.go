@@ -5,12 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/gin-gonic/gin"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 	"io"
 	"io/ioutil"
 	"os"
@@ -19,6 +13,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/gin-gonic/gin"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 /* ===============
@@ -302,7 +303,12 @@ func (fs *FileSystem) Decompress(ctx context.Context, src, dst string) error {
 					}
 				}()
 
-				err = fs.UploadFromStream(ctx, fileStream, savePath, uint64(size))
+				err = fs.UploadFromStream(ctx, &fsctx.FileStream{
+					File:        fileStream,
+					Size:        uint64(size),
+					Name:        path.Base(savePath),
+					VirtualPath: path.Dir(savePath),
+				}, true)
 				fileStream.Close()
 				if err != nil {
 					util.Log().Debug("无法上传压缩包内的文件%s , %s , 跳过", rawPath, err)

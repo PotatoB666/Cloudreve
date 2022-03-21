@@ -2,9 +2,10 @@ package controllers
 
 import (
 	"context"
-	ariaCall "github.com/HFO4/cloudreve/pkg/aria2"
-	"github.com/HFO4/cloudreve/service/aria2"
-	"github.com/HFO4/cloudreve/service/explorer"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/aria2/common"
+	"github.com/cloudreve/Cloudreve/v3/service/aria2"
+	"github.com/cloudreve/Cloudreve/v3/service/explorer"
 	"github.com/gin-gonic/gin"
 )
 
@@ -12,7 +13,7 @@ import (
 func AddAria2URL(c *gin.Context) {
 	var addService aria2.AddURLService
 	if err := c.ShouldBindJSON(&addService); err == nil {
-		res := addService.Add(c, ariaCall.URLTask)
+		res := addService.Add(c, common.URLTask)
 		c.JSON(200, res)
 	} else {
 		c.JSON(200, ErrorResponse(err))
@@ -51,7 +52,7 @@ func AddAria2Torrent(c *gin.Context) {
 
 		if err := c.ShouldBindJSON(&addService); err == nil {
 			addService.URL = res.Data.(string)
-			res := addService.Add(c, ariaCall.URLTask)
+			res := addService.Add(c, common.URLTask)
 			c.JSON(200, res)
 		} else {
 			c.JSON(200, ErrorResponse(err))
@@ -62,7 +63,7 @@ func AddAria2Torrent(c *gin.Context) {
 	}
 }
 
-// CancelAria2Download 取消aria2离线下载任务
+// CancelAria2Download 取消或删除aria2离线下载任务
 func CancelAria2Download(c *gin.Context) {
 	var selectService aria2.DownloadTaskService
 	if err := c.ShouldBindUri(&selectService); err == nil {

@@ -2,29 +2,35 @@ package model
 
 import (
 	"encoding/gob"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/jinzhu/gorm"
+	"encoding/json"
+	"errors"
 	"path"
 	"time"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/jinzhu/gorm"
 )
 
 // File 文件
 type File struct {
 	// 表字段
 	gorm.Model
-	Name       string `gorm:"unique_index:idx_only_one"`
-	SourceName string `gorm:"type:text"`
-	UserID     uint   `gorm:"index:user_id;unique_index:idx_only_one"`
-	Size       uint64
-	PicInfo    string
-	FolderID   uint `gorm:"index:folder_id;unique_index:idx_only_one"`
-	PolicyID   uint
+	Name            string `gorm:"unique_index:idx_only_one"`
+	SourceName      string `gorm:"type:text"`
+	UserID          uint   `gorm:"index:user_id;unique_index:idx_only_one"`
+	Size            uint64
+	PicInfo         string
+	FolderID        uint `gorm:"index:folder_id;unique_index:idx_only_one"`
+	PolicyID        uint
+	UploadSessionID *string `gorm:"index:session_id;unique_index:session_only_one"`
+	Metadata        string  `gorm:"type:text"`
 
 	// 关联模型
 	Policy Policy `gorm:"PRELOAD:false,association_autoupdate:false"`
 
 	// 数据库忽略字段
-	Position string `gorm:"-"`
+	Position           string            `gorm:"-"`
+	MetadataSerialized map[string]string `gorm:"-"`
 }
 
 func init() {
@@ -33,12 +39,40 @@ func init() {
 }
 
 // Create 创建文件记录
-func (file *File) Create() (uint, error) {
-	if err := DB.Create(file).Error; err != nil {
+func (file *File) Create() error {
+	tx := DB.Begin()
+
+	if err := tx.Create(file).Error; err != nil {
 		util.Log().Warning("无法插入文件记录, %s", err)
-		return 0, err
+		tx.Rollback()
+		return err
 	}
-	return file.ID, nil
+
+	user := &User{}
+	user.ID = file.UserID
+	if err := user.ChangeStorage(tx, "+", file.Size); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
+}
+
+// AfterFind 找到文件后的钩子
+func (file *File) AfterFind() (err error) {
+	// 反序列化文件元数据
+	if file.Metadata != "" {
+		err = json.Unmarshal([]byte(file.Metadata), &file.MetadataSerialized)
+	}
+
+	return
+}
+
+// BeforeSave Save策略前的钩子
+func (file *File) BeforeSave() (err error) {
+	metaValue, err := json.Marshal(&file.MetadataSerialized)
+	file.Metadata = string(metaValue)
+	return err
 }
 
 // GetChildFile 查找目录下名为name的子文件
@@ -117,6 +151,19 @@ func GetChildFilesOfFolders(folders *[]Folder) ([]File, error) {
 	return files, result.Error
 }
 
+// GetUploadPlaceholderFiles 获取所有上传占位文件
+// UID为0表示忽略用户
+func GetUploadPlaceholderFiles(uid uint) []*File {
+	query := DB
+	if uid != 0 {
+		query = query.Where("user_id = ?", uid)
+	}
+
+	var files []*File
+	query.Where("upload_session_id is not NULL").Find(&files)
+	return files
+}
+
 // GetPolicy 获取文件所属策略
 func (file *File) GetPolicy() *Policy {
 	if file.Policy.Model.ID == 0 {
@@ -165,10 +212,35 @@ func RemoveFilesWithSoftLinks(files []File) ([]File, error) {
 
 }
 
-// DeleteFileByIDs 根据给定ID批量删除文件记录
-func DeleteFileByIDs(ids []uint) error {
-	result := DB.Where("id in (?)", ids).Unscoped().Delete(&File{})
-	return result.Error
+// DeleteFiles 批量删除文件记录并归还容量
+func DeleteFiles(files []*File, uid uint) error {
+	tx := DB.Begin()
+	user := &User{}
+	user.ID = uid
+	var size uint64
+	for _, file := range files {
+		if file.UserID != uid {
+			tx.Rollback()
+			return errors.New("User id not consistent")
+		}
+
+		result := tx.Unscoped().Delete(file)
+		if result.RowsAffected != 0 {
+			size += file.Size
+		}
+
+		if result.Error != nil {
+			tx.Rollback()
+			return result.Error
+		}
+	}
+
+	if err := user.ChangeStorage(tx, "-", size); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
 }
 
 // GetFilesByParentIDs 根据父目录ID查找文件
@@ -178,6 +250,13 @@ func GetFilesByParentIDs(ids []uint, uid uint) ([]File, error) {
 	return files, result.Error
 }
 
+// GetFilesByUploadSession 查找上传会话对应的文件
+func GetFilesByUploadSession(sessionID string, uid uint) (*File, error) {
+	file := File{}
+	result := DB.Where("user_id = ? and upload_session_id = ?", uid, sessionID).Find(&file)
+	return &file, result.Error
+}
+
 // Rename 重命名文件
 func (file *File) Rename(new string) error {
 	return DB.Model(&file).Update("name", new).Error
@@ -185,17 +264,62 @@ func (file *File) Rename(new string) error {
 
 // UpdatePicInfo 更新文件的图像信息
 func (file *File) UpdatePicInfo(value string) error {
-	return DB.Model(&file).Update("pic_info", value).Error
+	return DB.Model(&file).Set("gorm:association_autoupdate", false).UpdateColumns(File{PicInfo: value}).Error
 }
 
 // UpdateSize 更新文件的大小信息
+// TODO: 全局锁
 func (file *File) UpdateSize(value uint64) error {
-	return DB.Model(&file).Update("size", value).Error
+	tx := DB.Begin()
+	var sizeDelta uint64
+	operator := "+"
+	user := User{}
+	user.ID = file.UserID
+	if value > file.Size {
+		sizeDelta = value - file.Size
+	} else {
+		operator = "-"
+		sizeDelta = file.Size - value
+	}
+
+	if res := tx.Model(&file).
+		Where("size = ?", file.Size).
+		Set("gorm:association_autoupdate", false).
+		Update("size", value); res.Error != nil {
+		tx.Rollback()
+		return res.Error
+	}
+
+	if err := user.ChangeStorage(tx, operator, sizeDelta); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	file.Size = value
+	return tx.Commit().Error
 }
 
 // UpdateSourceName 更新文件的源文件名
 func (file *File) UpdateSourceName(value string) error {
-	return DB.Model(&file).Update("source_name", value).Error
+	return DB.Model(&file).Set("gorm:association_autoupdate", false).Update("source_name", value).Error
+}
+
+func (file *File) PopChunkToFile(lastModified *time.Time, picInfo string) error {
+	file.UploadSessionID = nil
+	if lastModified != nil {
+		file.UpdatedAt = *lastModified
+	}
+
+	return DB.Model(file).UpdateColumns(map[string]interface{}{
+		"upload_session_id": file.UploadSessionID,
+		"updated_at":        file.UpdatedAt,
+		"pic_info":          picInfo,
+	}).Error
+}
+
+// CanCopy 返回文件是否可被复制
+func (file *File) CanCopy() bool {
+	return file.UploadSessionID == nil
 }
 
 /*

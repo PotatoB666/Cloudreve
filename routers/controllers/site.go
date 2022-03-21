@@ -1,10 +1,10 @@
 package controllers
 
 import (
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/gin-gonic/gin"
 	"github.com/mojocn/base64Captcha"
 )
@@ -24,8 +24,10 @@ func SiteConfig(c *gin.Context) {
 		"home_view_method",
 		"share_view_method",
 		"authn_enabled",
-		"captcha_IsUseReCaptcha",
 		"captcha_ReCaptchaKey",
+		"captcha_type",
+		"captcha_TCaptcha_CaptchaAppId",
+		"register_enabled",
 	)
 
 	// 如果已登录，则同时返回用户信息和标签
@@ -40,9 +42,14 @@ func SiteConfig(c *gin.Context) {
 
 // Ping 状态检查页面
 func Ping(c *gin.Context) {
+	version := conf.BackendVersion
+	if conf.IsPro == "true" {
+		version += "-pro"
+	}
+
 	c.JSON(200, serializer.Response{
 		Code: 0,
-		Data: conf.BackendVersion,
+		Data: version,
 	})
 }
 

@@ -3,15 +3,17 @@ package request
 import (
 	"context"
 	"errors"
-	"github.com/HFO4/cloudreve/pkg/auth"
-	"github.com/stretchr/testify/assert"
-	testMock "github.com/stretchr/testify/mock"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
+	"github.com/stretchr/testify/assert"
+	testMock "github.com/stretchr/testify/mock"
 )
 
 type ClientMock struct {
@@ -53,16 +55,19 @@ func TestWithContext(t *testing.T) {
 
 func TestHTTPClient_Request(t *testing.T) {
 	asserts := assert.New(t)
-	client := HTTPClient{}
+	client := NewClient(WithSlaveMeta("test"))
 
 	// 正常
 	{
 		resp := client.Request(
-			"GET",
-			"http://cloudreveisnotexist.com",
+			"POST",
+			"/test",
 			strings.NewReader(""),
+			WithContentLength(0),
+			WithEndpoint("http://cloudreveisnotexist.com"),
 			WithTimeout(time.Duration(1)*time.Microsecond),
 			WithCredential(auth.HMACAuth{SecretKey: []byte("123")}, 10),
+			WithoutHeader([]string{"origin", "origin"}),
 		)
 		asserts.Error(resp.Err)
 		asserts.Nil(resp.Response)
@@ -222,4 +227,12 @@ func TestNopRSCloser_SetFirstFakeChunk(t *testing.T) {
 
 	rsc.SetContentLength(20)
 	asserts.EqualValues(20, rsc.status.Size)
+}
+
+func TestBlackHole(t *testing.T) {
+	a := assert.New(t)
+	cache.Set("setting_reset_after_upload_failed", "true", 0)
+	a.NotPanics(func() {
+		BlackHole(strings.NewReader("TestBlackHole"))
+	})
 }

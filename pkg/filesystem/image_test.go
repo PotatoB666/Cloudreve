@@ -2,12 +2,13 @@ package filesystem
 
 import (
 	"context"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem/response"
+	"testing"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/response"
 	"github.com/stretchr/testify/assert"
 	testMock "github.com/stretchr/testify/mock"
-	"testing"
 )
 
 func TestFileSystem_GetThumb(t *testing.T) {
@@ -36,4 +37,13 @@ func TestFileSystem_GetThumb(t *testing.T) {
 		asserts.NoError(err)
 		asserts.EqualValues(50, res.MaxAge)
 	}
+}
+
+func TestFileSystem_ThumbWorker(t *testing.T) {
+	asserts := assert.New(t)
+
+	asserts.NotPanics(func() {
+		getThumbWorker().addWorker()
+		getThumbWorker().releaseWorker()
+	})
 }

@@ -1,11 +1,17 @@
 package model
 
 import (
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/HFO4/cloudreve/pkg/util"
+	"context"
+	"github.com/cloudreve/Cloudreve/v3/models/scripts/invoker"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/fatih/color"
+	"github.com/gofrs/uuid"
+	"github.com/hashicorp/go-version"
 	"github.com/jinzhu/gorm"
+	"sort"
+	"strings"
 )
 
 // 是否需要迁移
@@ -34,8 +40,9 @@ func migration() {
 	if conf.DatabaseConfig.Type == "mysql" {
 		DB = DB.Set("gorm:table_options", "ENGINE=InnoDB")
 	}
+
 	DB.AutoMigrate(&User{}, &Setting{}, &Group{}, &Policy{}, &Folder{}, &File{}, &Share{},
-		&Task{}, &Download{}, &Tag{}, &Webdav{})
+		&Task{}, &Download{}, &Tag{}, &Webdav{}, &Node{})
 
 	// 创建初始存储策略
 	addDefaultPolicy()
@@ -46,8 +53,14 @@ func migration() {
 	// 创建初始管理员账户
 	addDefaultUser()
 
+	// 创建初始节点
+	addDefaultNode()
+
 	// 向设置数据表添加初始设置
 	addDefaultSettings()
+
+	// 执行数据库升级脚本
+	execUpgradeScripts()
 
 	util.Log().Info("数据库初始化结束")
 
@@ -73,6 +86,8 @@ func addDefaultPolicy() {
 }
 
 func addDefaultSettings() {
+	siteID, _ := uuid.NewV4()
+
 	defaultSettings := []Setting{
 		{Name: "siteURL", Value: `http://localhost`, Type: "basic"},
 		{Name: "siteName", Value: `Cloudreve`, Type: "basic"},
@@ -83,6 +98,7 @@ func addDefaultSettings() {
 		{Name: "siteDes", Value: `Cloudreve`, Type: "basic"},
 		{Name: "siteTitle", Value: `平步云端`, Type: "basic"},
 		{Name: "siteScript", Value: ``, Type: "basic"},
+		{Name: "siteID", Value: siteID.String(), Type: "basic"},
 		{Name: "fromName", Value: `Cloudreve`, Type: "mail"},
 		{Name: "mail_keepalive", Value: `30`, Type: "mail"},
 		{Name: "fromAdress", Value: `no-reply@acg.blue`, Type: "mail"},
@@ -100,11 +116,15 @@ func addDefaultSettings() {
 		{Name: "upload_credential_timeout", Value: `1800`, Type: "timeout"},
 		{Name: "upload_session_timeout", Value: `86400`, Type: "timeout"},
 		{Name: "slave_api_timeout", Value: `60`, Type: "timeout"},
+		{Name: "slave_node_retry", Value: `3`, Type: "slave"},
+		{Name: "slave_ping_interval", Value: `60`, Type: "slave"},
+		{Name: "slave_recover_interval", Value: `120`, Type: "slave"},
+		{Name: "slave_transfer_timeout", Value: `172800`, Type: "timeout"},
 		{Name: "onedrive_monitor_timeout", Value: `600`, Type: "timeout"},
 		{Name: "share_download_session_timeout", Value: `2073600`, Type: "timeout"},
 		{Name: "onedrive_callback_check", Value: `20`, Type: "timeout"},
-		{Name: "aria2_call_timeout", Value: `5`, Type: "timeout"},
-		{Name: "onedrive_chunk_retries", Value: `1`, Type: "retry"},
+		{Name: "folder_props_timeout", Value: `300`, Type: "timeout"},
+		{Name: "chunk_retries", Value: `5`, Type: "retry"},
 		{Name: "onedrive_source_timeout", Value: `1800`, Type: "timeout"},
 		{Name: "reset_after_upload_failed", Value: `0`, Type: "upload"},
 		{Name: "login_captcha", Value: `0`, Type: "login"},
@@ -130,11 +150,6 @@ Neue',Helvetica,Arial,sans-serif; box-sizing: border-box; font-size: 14px; verti
 		{Name: "gravatar_server", Value: `https://www.gravatar.com/`, Type: "avatar"},
 		{Name: "defaultTheme", Value: `#3f51b5`, Type: "basic"},
 		{Name: "themes", Value: `{"#3f51b5":{"palette":{"primary":{"main":"#3f51b5"},"secondary":{"main":"#f50057"}}},"#2196f3":{"palette":{"primary":{"main":"#2196f3"},"secondary":{"main":"#FFC107"}}},"#673AB7":{"palette":{"primary":{"main":"#673AB7"},"secondary":{"main":"#2196F3"}}},"#E91E63":{"palette":{"primary":{"main":"#E91E63"},"secondary":{"main":"#42A5F5","contrastText":"#fff"}}},"#FF5722":{"palette":{"primary":{"main":"#FF5722"},"secondary":{"main":"#3F51B5"}}},"#FFC107":{"palette":{"primary":{"main":"#FFC107"},"secondary":{"main":"#26C6DA"}}},"#8BC34A":{"palette":{"primary":{"main":"#8BC34A","contrastText":"#fff"},"secondary":{"main":"#FF8A65","contrastText":"#fff"}}},"#009688":{"palette":{"primary":{"main":"#009688"},"secondary":{"main":"#4DD0E1","contrastText":"#fff"}}},"#607D8B":{"palette":{"primary":{"main":"#607D8B"},"secondary":{"main":"#F06292"}}},"#795548":{"palette":{"primary":{"main":"#795548"},"secondary":{"main":"#4CAF50","contrastText":"#fff"}}}}`, Type: "basic"},
-		{Name: "aria2_token", Value: ``, Type: "aria2"},
-		{Name: "aria2_rpcurl", Value: ``, Type: "aria2"},
-		{Name: "aria2_temp_path", Value: ``, Type: "aria2"},
-		{Name: "aria2_options", Value: `{}`, Type: "aria2"},
-		{Name: "aria2_interval", Value: `60`, Type: "aria2"},
 		{Name: "max_worker_num", Value: `10`, Type: "task"},
 		{Name: "max_parallel_transfer", Value: `4`, Type: "task"},
 		{Name: "secret_key", Value: util.RandStringRunes(256), Type: "auth"},
@@ -147,7 +162,9 @@ Neue',Helvetica,Arial,sans-serif; box-sizing: border-box; font-size: 14px; verti
 		{Name: "home_view_method", Value: "icon", Type: "view"},
 		{Name: "share_view_method", Value: "list", Type: "view"},
 		{Name: "cron_garbage_collect", Value: "@hourly", Type: "cron"},
+		{Name: "cron_recycle_upload_session", Value: "@every 1h30m", Type: "cron"},
 		{Name: "authn_enabled", Value: "0", Type: "authn"},
+		{Name: "captcha_type", Value: "normal", Type: "captcha"},
 		{Name: "captcha_height", Value: "60", Type: "captcha"},
 		{Name: "captcha_width", Value: "240", Type: "captcha"},
 		{Name: "captcha_mode", Value: "3", Type: "captcha"},
@@ -159,9 +176,12 @@ Neue',Helvetica,Arial,sans-serif; box-sizing: border-box; font-size: 14px; verti
 		{Name: "captcha_IsShowSlimeLine", Value: "1", Type: "captcha"},
 		{Name: "captcha_IsShowSineLine", Value: "0", Type: "captcha"},
 		{Name: "captcha_CaptchaLen", Value: "6", Type: "captcha"},
-		{Name: "captcha_IsUseReCaptcha", Value: "0", Type: "captcha"},
 		{Name: "captcha_ReCaptchaKey", Value: "defaultKey", Type: "captcha"},
 		{Name: "captcha_ReCaptchaSecret", Value: "defaultSecret", Type: "captcha"},
+		{Name: "captcha_TCaptcha_CaptchaAppId", Value: "", Type: "captcha"},
+		{Name: "captcha_TCaptcha_AppSecretKey", Value: "", Type: "captcha"},
+		{Name: "captcha_TCaptcha_SecretId", Value: "", Type: "captcha"},
+		{Name: "captcha_TCaptcha_SecretKey", Value: "", Type: "captcha"},
 		{Name: "thumb_width", Value: "400", Type: "thumb"},
 		{Name: "thumb_height", Value: "300", Type: "thumb"},
 		{Name: "pwa_small_icon", Value: "/static/img/favicon.ico", Type: "pwa"},
@@ -170,6 +190,7 @@ Neue',Helvetica,Arial,sans-serif; box-sizing: border-box; font-size: 14px; verti
 		{Name: "pwa_display", Value: "standalone", Type: "pwa"},
 		{Name: "pwa_theme_color", Value: "#000000", Type: "pwa"},
 		{Name: "pwa_background_color", Value: "#ffffff", Type: "pwa"},
+		{Name: "office_preview_service", Value: "https://view.officeapps.live.com/op/view.aspx?src={$src}", Type: "preview"},
 	}
 
 	for _, value := range defaultSettings {
@@ -258,5 +279,38 @@ func addDefaultUser() {
 		c := color.New(color.FgWhite).Add(color.BgBlack).Add(color.Bold)
 		util.Log().Info("初始管理员账号：" + c.Sprint("admin@cloudreve.org"))
 		util.Log().Info("初始管理员密码：" + c.Sprint(password))
+	}
+}
+
+func addDefaultNode() {
+	_, err := GetNodeByID(1)
+
+	if gorm.IsRecordNotFoundError(err) {
+		defaultAdminGroup := Node{
+			Name:   "主机（本机）",
+			Status: NodeActive,
+			Type:   MasterNodeType,
+			Aria2OptionsSerialized: Aria2Option{
+				Interval: 10,
+				Timeout:  10,
+			},
+		}
+		if err := DB.Create(&defaultAdminGroup).Error; err != nil {
+			util.Log().Panic("无法创建初始节点记录, %s", err)
+		}
+	}
+}
+
+func execUpgradeScripts() {
+	s := invoker.ListPrefix("UpgradeTo")
+	versions := make([]*version.Version, len(s))
+	for i, raw := range s {
+		v, _ := version.NewVersion(strings.TrimPrefix(raw, "UpgradeTo"))
+		versions[i] = v
+	}
+	sort.Sort(version.Collection(versions))
+
+	for i := 0; i < len(versions); i++ {
+		invoker.RunDBScript("UpgradeTo"+versions[i].String(), context.Background())
 	}
 }

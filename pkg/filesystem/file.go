@@ -2,14 +2,16 @@ package filesystem
 
 import (
 	"context"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/filesystem/response"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/juju/ratelimit"
 	"io"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/response"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/juju/ratelimit"
 )
 
 /* ============
@@ -42,41 +44,42 @@ func (fs *FileSystem) withSpeedLimit(rs response.RSCloser) response.RSCloser {
 }
 
 // AddFile 新增文件记录
-func (fs *FileSystem) AddFile(ctx context.Context, parent *model.Folder) (*model.File, error) {
+func (fs *FileSystem) AddFile(ctx context.Context, parent *model.Folder, file fsctx.FileHeader) (*model.File, error) {
 	// 添加文件记录前的钩子
-	err := fs.Trigger(ctx, "BeforeAddFile")
+	err := fs.Trigger(ctx, "BeforeAddFile", file)
 	if err != nil {
-		if err := fs.Trigger(ctx, "BeforeAddFileFailed"); err != nil {
+		if err := fs.Trigger(ctx, "BeforeAddFileFailed", file); err != nil {
 			util.Log().Debug("BeforeAddFileFailed 钩子执行失败，%s", err)
 		}
 		return nil, err
 	}
 
-	file := ctx.Value(fsctx.FileHeaderCtx).(FileHeader)
-	filePath := ctx.Value(fsctx.SavePathCtx).(string)
-
+	uploadInfo := file.Info()
 	newFile := model.File{
-		Name:       file.GetFileName(),
-		SourceName: filePath,
-		UserID:     fs.User.ID,
-		Size:       file.GetSize(),
-		FolderID:   parent.ID,
-		PolicyID:   fs.User.Policy.ID,
+		Name:               uploadInfo.FileName,
+		SourceName:         uploadInfo.SavePath,
+		UserID:             fs.User.ID,
+		Size:               uploadInfo.Size,
+		FolderID:           parent.ID,
+		PolicyID:           fs.Policy.ID,
+		MetadataSerialized: uploadInfo.Metadata,
+		UploadSessionID:    uploadInfo.UploadSessionID,
 	}
 
-	if fs.User.Policy.IsThumbExist(file.GetFileName()) {
+	if fs.Policy.IsThumbExist(uploadInfo.FileName) {
 		newFile.PicInfo = "1,1"
 	}
 
-	_, err = newFile.Create()
+	err = newFile.Create()
 
 	if err != nil {
-		if err := fs.Trigger(ctx, "AfterValidateFailed"); err != nil {
+		if err := fs.Trigger(ctx, "AfterValidateFailed", file); err != nil {
 			util.Log().Debug("AfterValidateFailed 钩子执行失败，%s", err)
 		}
 		return nil, ErrFileExisted.WithError(err)
 	}
 
+	fs.User.Storage += newFile.Size
 	return &newFile, nil
 }
 
@@ -125,7 +128,7 @@ func (fs *FileSystem) Preview(ctx context.Context, id uint, isText bool) (*respo
 
 	// 否则重定向到签名的预览URL
 	ttl := model.GetIntSetting("preview_timeout", 60)
-	previewURL, err := fs.signURL(ctx, &fs.FileTarget[0], int64(ttl), false)
+	previewURL, err := fs.SignURL(ctx, &fs.FileTarget[0], int64(ttl), false)
 	if err != nil {
 		return nil, err
 	}
@@ -152,14 +155,7 @@ func (fs *FileSystem) GetDownloadContent(ctx context.Context, id uint) (response
 
 // GetContent 获取文件内容，path为虚拟路径
 func (fs *FileSystem) GetContent(ctx context.Context, id uint) (response.RSCloser, error) {
-	// 触发`下载前`钩子
-	err := fs.Trigger(ctx, "BeforeFileDownload")
-	if err != nil {
-		util.Log().Debug("BeforeFileDownload 钩子执行失败，%s", err)
-		return nil, err
-	}
-
-	err = fs.resetFileIDIfNotExist(ctx, id)
+	err := fs.resetFileIDIfNotExist(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -183,23 +179,35 @@ func (fs *FileSystem) deleteGroupedFile(ctx context.Context, files map[uint][]*m
 
 	for policyID, toBeDeletedFiles := range files {
 		// 列举出需要物理删除的文件的物理路径
-		sourceNames := make([]string, 0, len(toBeDeletedFiles))
+		sourceNamesAll := make([]string, 0, len(toBeDeletedFiles))
+
 		for i := 0; i < len(toBeDeletedFiles); i++ {
-			sourceNames = append(sourceNames, toBeDeletedFiles[i].SourceName)
+			sourceNamesAll = append(sourceNamesAll, toBeDeletedFiles[i].SourceName)
+
+			if toBeDeletedFiles[i].UploadSessionID != nil {
+				if session, ok := cache.Get(UploadSessionCachePrefix + *toBeDeletedFiles[i].UploadSessionID); ok {
+					uploadSession := session.(serializer.UploadSession)
+					if err := fs.Handler.CancelToken(ctx, &uploadSession); err != nil {
+						util.Log().Warning("无法取消 [%s] 的上传会话: %s", err)
+					}
+
+					cache.Deletes([]string{*toBeDeletedFiles[i].UploadSessionID}, UploadSessionCachePrefix)
+				}
+
+			}
 		}
 
 		// 切换上传策略
 		fs.Policy = toBeDeletedFiles[0].GetPolicy()
 		err := fs.DispatchHandler()
 		if err != nil {
-			failed[policyID] = sourceNames
+			failed[policyID] = sourceNamesAll
 			continue
 		}
 
 		// 执行删除
-		failedFile, _ := fs.Handler.Delete(ctx, sourceNames)
+		failedFile, _ := fs.Handler.Delete(ctx, sourceNamesAll)
 		failed[policyID] = failedFile
-
 	}
 
 	return failed
@@ -214,7 +222,7 @@ func (fs *FileSystem) GroupFileByPolicy(ctx context.Context, files []model.File)
 			// 如果已存在分组，直接追加
 			policyGroup[files[key].PolicyID] = append(file, &files[key])
 		} else {
-			// 分布不存在，创建
+			// 分组不存在，创建
 			policyGroup[files[key].PolicyID] = make([]*model.File, 0)
 			policyGroup[files[key].PolicyID] = append(policyGroup[files[key].PolicyID], &files[key])
 		}
@@ -233,7 +241,7 @@ func (fs *FileSystem) GetDownloadURL(ctx context.Context, id uint, timeout strin
 
 	// 生成下載地址
 	ttl := model.GetIntSetting(timeout, 60)
-	source, err := fs.signURL(
+	source, err := fs.SignURL(
 		ctx,
 		fileTarget,
 		int64(ttl),
@@ -263,7 +271,7 @@ func (fs *FileSystem) GetSource(ctx context.Context, fileID uint) (string, error
 		)
 	}
 
-	source, err := fs.signURL(ctx, &fs.FileTarget[0], 0, false)
+	source, err := fs.SignURL(ctx, &fs.FileTarget[0], 0, false)
 	if err != nil {
 		return "", serializer.NewError(serializer.CodeNotSet, "无法获取外链", err)
 	}
@@ -271,7 +279,8 @@ func (fs *FileSystem) GetSource(ctx context.Context, fileID uint) (string, error
 	return source, nil
 }
 
-func (fs *FileSystem) signURL(ctx context.Context, file *model.File, ttl int64, isDownload bool) (string, error) {
+// SignURL 签名文件原始 URL
+func (fs *FileSystem) SignURL(ctx context.Context, file *model.File, ttl int64, isDownload bool) (string, error) {
 	fs.FileTarget = []model.File{*file}
 	ctx = context.WithValue(ctx, fsctx.FileModelCtx, *file)
 
@@ -348,7 +357,7 @@ func (fs *FileSystem) resetPolicyToFirstFile(ctx context.Context) error {
 }
 
 // Search 搜索文件
-func (fs *FileSystem) Search(ctx context.Context, keywords ...interface{}) ([]Object, error) {
+func (fs *FileSystem) Search(ctx context.Context, keywords ...interface{}) ([]serializer.Object, error) {
 	files, _ := model.GetFilesByKeywords(fs.User.ID, keywords...)
 	fs.SetTargetFile(&files)
 

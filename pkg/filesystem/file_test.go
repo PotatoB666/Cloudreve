@@ -2,23 +2,23 @@ package filesystem
 
 import (
 	"context"
-	"github.com/DATA-DOG/go-sqlmock"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/auth"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/local"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/jinzhu/gorm"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFileSystem_AddFile(t *testing.T) {
 	asserts := assert.New(t)
-	file := local.FileStream{
+	file := fsctx.FileStream{
 		Size: 5,
 		Name: "1.png",
 	}
@@ -227,25 +227,25 @@ func TestFileSystem_deleteGroupedFile(t *testing.T) {
 		},
 	}
 
-	// 全部失败
+	// 全部不存在
 	{
 		failed := fs.deleteGroupedFile(ctx, fs.GroupFileByPolicy(ctx, files))
 		asserts.Equal(map[uint][]string{
-			1: {"1_1.txt", "1_2.txt"},
-			2: {"2_1.txt", "2_2.txt"},
-			3: {"3_1.txt"},
+			1: {},
+			2: {},
+			3: {},
 		}, failed)
 	}
-	// 部分失败
+	// 部分不存在
 	{
 		file, err := os.Create(util.RelativePath("1_1.txt"))
 		asserts.NoError(err)
 		_ = file.Close()
 		failed := fs.deleteGroupedFile(ctx, fs.GroupFileByPolicy(ctx, files))
 		asserts.Equal(map[uint][]string{
-			1: {"1_2.txt"},
-			2: {"2_1.txt", "2_2.txt"},
-			3: {"3_1.txt"},
+			1: {},
+			2: {},
+			3: {},
 		}, failed)
 	}
 	// 部分失败,包含整组未知存储策略导致的失败
@@ -258,9 +258,9 @@ func TestFileSystem_deleteGroupedFile(t *testing.T) {
 		files[3].Policy.Type = "unknown"
 		failed := fs.deleteGroupedFile(ctx, fs.GroupFileByPolicy(ctx, files))
 		asserts.Equal(map[uint][]string{
-			1: {"1_2.txt"},
+			1: {},
 			2: {"2_1.txt", "2_2.txt"},
-			3: {"3_1.txt"},
+			3: {},
 		}, failed)
 	}
 }

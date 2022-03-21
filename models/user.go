@@ -5,10 +5,11 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/HFO4/cloudreve/pkg/util"
+	"strings"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"strings"
 )
 
 const (
@@ -34,7 +35,7 @@ type User struct {
 	Storage   uint64
 	TwoFactor string
 	Avatar    string
-	Options   string `json:"-",gorm:"type:text"`
+	Options   string `json:"-" gorm:"type:text"`
 	Authn     string `gorm:"type:text"`
 
 	// 关联模型
@@ -88,6 +89,11 @@ func (user *User) IncreaseStorage(size uint64) bool {
 	return false
 }
 
+// ChangeStorage 更新用户容量
+func (user *User) ChangeStorage(tx *gorm.DB, operator string, size uint64) error {
+	return tx.Model(user).Update("storage", gorm.Expr("storage "+operator+" ?", size)).Error
+}
+
 // IncreaseStorageWithoutCheck 忽略可用容量，增加用户已用容量
 func (user *User) IncreaseStorageWithoutCheck(size uint64) {
 	if size == 0 {
@@ -138,6 +144,13 @@ func GetActiveUserByOpenID(openid string) (User, error) {
 
 // GetUserByEmail 用Email获取用户
 func GetUserByEmail(email string) (User, error) {
+	var user User
+	result := DB.Set("gorm:auto_preload", true).Where("email = ?", email).First(&user)
+	return user, result.Error
+}
+
+// GetActiveUserByEmail 用Email获取可登录用户
+func GetActiveUserByEmail(email string) (User, error) {
 	var user User
 	result := DB.Set("gorm:auto_preload", true).Where("status = ? and email = ?", Active, email).First(&user)
 	return user, result.Error

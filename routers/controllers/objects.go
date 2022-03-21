@@ -2,7 +2,8 @@ package controllers
 
 import (
 	"context"
-	"github.com/HFO4/cloudreve/service/explorer"
+
+	"github.com/cloudreve/Cloudreve/v3/service/explorer"
 	"github.com/gin-gonic/gin"
 )
 
@@ -60,6 +61,22 @@ func Rename(c *gin.Context) {
 	var service explorer.ItemRenameService
 	if err := c.ShouldBindJSON(&service); err == nil {
 		res := service.Rename(ctx, c)
+		c.JSON(200, res)
+	} else {
+		c.JSON(200, ErrorResponse(err))
+	}
+}
+
+// Rename 重命名文件或目录
+func GetProperty(c *gin.Context) {
+	// 创建上下文
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var service explorer.ItemPropertyService
+	service.ID = c.Param("id")
+	if err := c.ShouldBindQuery(&service); err == nil {
+		res := service.GetProperty(ctx, c)
 		c.JSON(200, res)
 	} else {
 		c.JSON(200, ErrorResponse(err))

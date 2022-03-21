@@ -37,7 +37,7 @@
 
 * :cloud: 支持本机、从机、七牛、阿里云 OSS、腾讯云 COS、又拍云、OneDrive (包括世纪互联版) 作为存储端
 * :outbox_tray: 上传/下载 支持客户端直传，支持下载限速
-* 💾 可对接 Aria2 离线下载
+* 💾 可对接 Aria2 离线下载，可使用多个从机机点分担下载任务
 * 📚 在线 压缩/解压缩、多文件打包下载
 * 💻 覆盖全部存储策略的 WebDAV 协议支持
 * :zap: 拖拽上传、目录上传、流式上传处理
@@ -108,7 +108,7 @@ export COMMIT_SHA=$(git rev-parse --short HEAD)
 export VERSION=$(git describe --tags)
 
 # 开始编译
-go build -a -o cloudreve -ldflags " -X 'github.com/HFO4/cloudreve/pkg/conf.BackendVersion=$VERSION' -X 'github.com/HFO4/cloudreve/pkg/conf.LastCommit=$COMMIT_SHA'"
+go build -a -o cloudreve -ldflags " -X 'github.com/cloudreve/Cloudreve/v3/pkg/conf.BackendVersion=$VERSION' -X 'github.com/cloudreve/Cloudreve/v3/pkg/conf.LastCommit=$COMMIT_SHA'"
 ```
 
 你也可以使用项目根目录下的`build.sh`快速开始构建：

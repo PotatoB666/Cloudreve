@@ -2,12 +2,13 @@ package model
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/HFO4/cloudreve/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestGetUserByID(t *testing.T) {
@@ -176,10 +177,10 @@ func TestNewUser(t *testing.T) {
 
 func TestUser_AfterFind(t *testing.T) {
 	asserts := assert.New(t)
-	cache.Deletes([]string{"1"}, "policy_")
+	cache.Deletes([]string{"0"}, "policy_")
 
 	policyRows := sqlmock.NewRows([]string{"id", "name"}).
-		AddRow(1, "默认存储策略")
+		AddRow(144, "默认存储策略")
 	mock.ExpectQuery("^SELECT (.+)").WillReturnRows(policyRows)
 
 	newUser := NewUser()
@@ -239,11 +240,6 @@ func TestUser_GetRemainingCapacity(t *testing.T) {
 	newUser.Group.MaxStorage = 100
 	newUser.Storage = 200
 	asserts.Equal(uint64(0), newUser.GetRemainingCapacity())
-
-	cache.Set("pack_size_0", uint64(10), 0)
-	newUser.Group.MaxStorage = 100
-	newUser.Storage = 101
-	asserts.Equal(uint64(9), newUser.GetRemainingCapacity())
 }
 
 func TestUser_DeductionCapacity(t *testing.T) {
@@ -278,10 +274,6 @@ func TestUser_DeductionCapacity(t *testing.T) {
 
 	asserts.Equal(false, newUser.IncreaseStorage(1))
 	asserts.Equal(uint64(100), newUser.Storage)
-
-	cache.Set("pack_size_1", uint64(1), 0)
-	asserts.Equal(true, newUser.IncreaseStorage(1))
-	asserts.Equal(uint64(101), newUser.Storage)
 
 	asserts.True(newUser.IncreaseStorage(0))
 }
@@ -351,10 +343,20 @@ func TestUser_IncreaseStorageWithoutCheck(t *testing.T) {
 	}
 }
 
-func TestGetUserByEmail(t *testing.T) {
+func TestGetActiveUserByEmail(t *testing.T) {
 	asserts := assert.New(t)
 
 	mock.ExpectQuery("SELECT(.+)").WithArgs(Active, "abslant@foxmail.com").WillReturnRows(sqlmock.NewRows([]string{"id", "email"}))
+	_, err := GetActiveUserByEmail("abslant@foxmail.com")
+
+	asserts.Error(err)
+	asserts.NoError(mock.ExpectationsWereMet())
+}
+
+func TestGetUserByEmail(t *testing.T) {
+	asserts := assert.New(t)
+
+	mock.ExpectQuery("SELECT(.+)").WithArgs("abslant@foxmail.com").WillReturnRows(sqlmock.NewRows([]string{"id", "email"}))
 	_, err := GetUserByEmail("abslant@foxmail.com")
 
 	asserts.Error(err)

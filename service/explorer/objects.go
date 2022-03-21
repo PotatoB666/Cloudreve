@@ -3,21 +3,22 @@ package explorer
 import (
 	"context"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/auth"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/hashid"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/task"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/gin-gonic/gin"
 	"math"
 	"net/url"
 	"path"
 	"strings"
 	"time"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/task"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/gin-gonic/gin"
 )
 
 // ItemMoveService 处理多文件/目录移动
@@ -57,6 +58,13 @@ type ItemCompressService struct {
 type ItemDecompressService struct {
 	Src string `json:"src"`
 	Dst string `json:"dst" binding:"required,min=1,max=65535"`
+}
+
+// ItemPropertyService 获取对象属性服务
+type ItemPropertyService struct {
+	ID        string `binding:"required"`
+	TraceRoot bool   `form:"trace_root"`
+	IsFolder  bool   `form:"is_folder"`
 }
 
 // Raw 批量解码HashID，获取原始ID
@@ -350,5 +358,102 @@ func (service *ItemRenameService) Rename(ctx context.Context, c *gin.Context) se
 
 	return serializer.Response{
 		Code: 0,
+	}
+}
+
+// GetProperty 获取对象的属性
+func (service *ItemPropertyService) GetProperty(ctx context.Context, c *gin.Context) serializer.Response {
+	userCtx, _ := c.Get("user")
+	user := userCtx.(*model.User)
+
+	var props serializer.ObjectProps
+	props.QueryDate = time.Now()
+
+	// 如果是文件对象
+	if !service.IsFolder {
+		res, err := hashid.DecodeHashID(service.ID, hashid.FileID)
+		if err != nil {
+			return serializer.Err(serializer.CodeNotFound, "对象不存在", err)
+		}
+
+		file, err := model.GetFilesByIDs([]uint{res}, user.ID)
+		if err != nil {
+			return serializer.DBErr("找不到文件", err)
+		}
+
+		props.CreatedAt = file[0].CreatedAt
+		props.UpdatedAt = file[0].UpdatedAt
+		props.Policy = file[0].GetPolicy().Name
+		props.Size = file[0].Size
+
+		// 查找父目录
+		if service.TraceRoot {
+			parent, err := model.GetFoldersByIDs([]uint{file[0].FolderID}, user.ID)
+			if err != nil {
+				return serializer.DBErr("找不到父目录", err)
+			}
+
+			if err := parent[0].TraceRoot(); err != nil {
+				return serializer.DBErr("无法溯源父目录", err)
+			}
+
+			props.Path = path.Join(parent[0].Position, parent[0].Name)
+		}
+	} else {
+		res, err := hashid.DecodeHashID(service.ID, hashid.FolderID)
+		if err != nil {
+			return serializer.Err(serializer.CodeNotFound, "对象不存在", err)
+		}
+
+		// 如果对象是目录, 先尝试返回缓存结果
+		if cacheRes, ok := cache.Get(fmt.Sprintf("folder_props_%d", res)); ok {
+			return serializer.Response{Data: cacheRes.(serializer.ObjectProps)}
+		}
+
+		folder, err := model.GetFoldersByIDs([]uint{res}, user.ID)
+		if err != nil {
+			return serializer.DBErr("找不到目录", err)
+		}
+
+		props.CreatedAt = folder[0].CreatedAt
+		props.UpdatedAt = folder[0].UpdatedAt
+
+		// 统计子目录
+		childFolders, err := model.GetRecursiveChildFolder([]uint{folder[0].ID},
+			user.ID, true)
+		if err != nil {
+			return serializer.DBErr("无法列取子目录", err)
+		}
+		props.ChildFolderNum = len(childFolders) - 1
+
+		// 统计子文件
+		files, err := model.GetChildFilesOfFolders(&childFolders)
+		if err != nil {
+			return serializer.DBErr("无法列取子文件", err)
+		}
+
+		// 统计子文件个数和大小
+		props.ChildFileNum = len(files)
+		for i := 0; i < len(files); i++ {
+			props.Size += files[i].Size
+		}
+
+		// 查找父目录
+		if service.TraceRoot {
+			if err := folder[0].TraceRoot(); err != nil {
+				return serializer.DBErr("无法溯源父目录", err)
+			}
+
+			props.Path = folder[0].Position
+		}
+
+		// 如果列取对象是目录，则缓存结果
+		cache.Set(fmt.Sprintf("folder_props_%d", res), props,
+			model.GetIntSetting("folder_props_timeout", 300))
+	}
+
+	return serializer.Response{
+		Code: 0,
+		Data: props,
 	}
 }

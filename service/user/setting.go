@@ -3,15 +3,17 @@ package user
 import (
 	"crypto/md5"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/gin-gonic/gin"
-	"github.com/pquerna/otp/totp"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp/totp"
 )
 
 // SettingService 通用设置服务
@@ -199,8 +201,8 @@ func (service *AvatarService) Get(c *gin.Context) serializer.Response {
 		if err != nil {
 			return serializer.Err(serializer.CodeInternalSetting, "无法解析 Gravatar 服务器地址", err)
 		}
-
-		has := md5.Sum([]byte(user.Email))
+		email_lowered := strings.ToLower(user.Email)
+		has := md5.Sum([]byte(email_lowered))
 		avatar, _ := url.Parse(fmt.Sprintf("/avatar/%x?d=mm&s=%s", has, sizes[service.Size]))
 
 		return serializer.Response{

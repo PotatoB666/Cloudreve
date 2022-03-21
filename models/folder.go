@@ -2,10 +2,11 @@ package model
 
 import (
 	"errors"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/jinzhu/gorm"
 	"path"
 	"time"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/jinzhu/gorm"
 )
 
 // Folder 目录
@@ -41,6 +42,26 @@ func (folder *Folder) GetChild(name string) (*Folder, error) {
 		resFolder.Position = path.Join(folder.Position, folder.Name)
 	}
 	return &resFolder, err
+}
+
+// TraceRoot 向上递归查找父目录
+func (folder *Folder) TraceRoot() error {
+	if folder.ParentID == nil {
+		return nil
+	}
+
+	var parentFolder Folder
+	err := DB.
+		Where("id = ? AND owner_id = ?", folder.ParentID, folder.OwnerID).
+		First(&parentFolder).Error
+
+	if err == nil {
+		err := parentFolder.TraceRoot()
+		folder.Position = path.Join(parentFolder.Position, parentFolder.Name)
+		return err
+	}
+
+	return err
 }
 
 // GetChildFolder 查找子目录
@@ -137,6 +158,11 @@ func (folder *Folder) MoveOrCopyFileTo(files []uint, dstFolder *Folder, isCopy b
 
 		// 复制文件记录
 		for _, oldFile := range originFiles {
+			if !oldFile.CanCopy() {
+				util.Log().Warning("无法复制正在上传中的文件 [%s]， 跳过...", oldFile.Name)
+				continue
+			}
+
 			oldFile.Model = gorm.Model{}
 			oldFile.FolderID = dstFolder.ID
 			oldFile.UserID = dstFolder.OwnerID
@@ -225,6 +251,11 @@ func (folder *Folder) CopyFolderTo(folderID uint, dstFolder *Folder) (size uint6
 
 	// 复制文件记录
 	for _, oldFile := range originFiles {
+		if !oldFile.CanCopy() {
+			util.Log().Warning("无法复制正在上传中的文件 [%s]， 跳过...", oldFile.Name)
+			continue
+		}
+
 		oldFile.Model = gorm.Model{}
 		oldFile.FolderID = newIDCache[oldFile.FolderID]
 		oldFile.UserID = dstFolder.OwnerID
@@ -242,6 +273,13 @@ func (folder *Folder) CopyFolderTo(folderID uint, dstFolder *Folder) (size uint6
 // MoveFolderTo 将folder目录下的dirs子目录复制或移动到dstFolder，
 // 返回此过程中增加的容量
 func (folder *Folder) MoveFolderTo(dirs []uint, dstFolder *Folder) error {
+
+	// 如果目标位置为待移动的目录，会导致 parent 为自己
+	// 造成死循环且无法被除搜索以外的组件展示
+	if folder.OwnerID == dstFolder.OwnerID && util.ContainsUint(dirs, dstFolder.ID) {
+		return errors.New("cannot move a folder into itself")
+	}
+
 	// 更改顶级要移动目录的父目录指向
 	err := DB.Model(Folder{}).Where(
 		"id in (?) and owner_id = ? and parent_id = ?",

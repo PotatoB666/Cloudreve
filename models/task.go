@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/HFO4/cloudreve/pkg/util"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/jinzhu/gorm"
 )
 
@@ -64,7 +64,7 @@ func ListTasks(uid uint, page, pageSize int, order string) ([]Task, int) {
 	dbChain = dbChain.Where("user_id = ?", uid)
 
 	// 计算总数用于分页
-	dbChain.Model(&Share{}).Count(&total)
+	dbChain.Model(&Task{}).Count(&total)
 
 	// 查询记录
 	dbChain.Limit(pageSize).Offset((page - 1) * pageSize).Order(order).Find(&tasks)

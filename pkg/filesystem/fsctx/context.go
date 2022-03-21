@@ -5,10 +5,6 @@ type key int
 const (
 	// GinCtx Gin的上下文
 	GinCtx key = iota
-	// SavePathCtx 文件物理路径
-	SavePathCtx
-	// FileHeaderCtx 上传的文件
-	FileHeaderCtx
 	// PathCtx 文件或目录的虚拟路径
 	PathCtx
 	// FileModelCtx 文件数据库模型
@@ -29,8 +25,14 @@ const (
 	ShareKeyCtx
 	// LimitParentCtx 限制父目录
 	LimitParentCtx
-	// IgnoreConflictCtx 忽略重名冲突
-	IgnoreConflictCtx
+	// IgnoreDirectoryConflictCtx 忽略目录重名冲突
+	IgnoreDirectoryConflictCtx
 	// RetryCtx 失败重试次数
 	RetryCtx
+	// ForceUsePublicEndpointCtx 强制使用公网 Endpoint
+	ForceUsePublicEndpointCtx
+	// CancelFuncCtx Context 取消函數
+	CancelFuncCtx
+	// 文件在从机节点中的路径
+	SlaveSrcPath
 )

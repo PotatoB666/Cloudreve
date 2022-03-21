@@ -3,16 +3,6 @@ package filesystem
 import (
 	"context"
 	"errors"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/local"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/filesystem/response"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm"
-	"github.com/stretchr/testify/assert"
-	testMock "github.com/stretchr/testify/mock"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -20,6 +10,16 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/response"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
+	testMock "github.com/stretchr/testify/mock"
 )
 
 type FileHeaderMock struct {
@@ -56,8 +56,8 @@ func (m FileHeaderMock) Source(ctx context.Context, path string, url url.URL, ex
 	return args.Get(0).(string), args.Error(1)
 }
 
-func (m FileHeaderMock) Token(ctx context.Context, expires int64, key string) (serializer.UploadCredential, error) {
-	args := m.Called(ctx, expires, key)
+func (m FileHeaderMock) Token(ctx context.Context, ttl int64, uploadSession *serializer.UploadSession) (serializer.UploadCredential, error) {
+	args := m.Called(ctx, ttl, uploadSession)
 	return args.Get(0).(serializer.UploadCredential), args.Error(1)
 }
 
@@ -84,7 +84,7 @@ func TestFileSystem_Upload(t *testing.T) {
 	c.Request, _ = http.NewRequest("POST", "/", nil)
 	ctx = context.WithValue(ctx, fsctx.GinCtx, c)
 	cancel()
-	file := local.FileStream{
+	file := fsctx.FileStream{
 		Size:        5,
 		VirtualPath: "/",
 		Name:        "1.txt",
@@ -113,7 +113,7 @@ func TestFileSystem_Upload(t *testing.T) {
 	ctx = context.WithValue(ctx, fsctx.GinCtx, c)
 	ctx = context.WithValue(ctx, fsctx.FileModelCtx, model.File{SourceName: "123/123.txt"})
 	cancel()
-	file = local.FileStream{
+	file = fsctx.FileStream{
 		Size:        5,
 		VirtualPath: "/",
 		Name:        "1.txt",
@@ -167,7 +167,7 @@ func TestFileSystem_GenerateSavePath_Anonymous(t *testing.T) {
 		},
 	)
 
-	savePath := fs.GenerateSavePath(ctx, local.FileStream{
+	savePath := fs.GenerateSavePath(ctx, fsctx.FileStream{
 		Name: "test.test",
 	})
 	asserts.Len(savePath, 26)
@@ -188,7 +188,7 @@ func TestFileSystem_GetUploadToken(t *testing.T) {
 		testHandler := new(FileHeaderMock)
 		testHandler.On("Token", testMock.Anything, int64(10), testMock.Anything).Return(serializer.UploadCredential{Token: "test"}, nil)
 		fs.Handler = testHandler
-		res, err := fs.GetUploadToken(ctx, "/", 10, "123")
+		res, err := fs.CreateUploadSession(ctx, "/", 10, "123")
 		testHandler.AssertExpectations(t)
 		asserts.NoError(err)
 		asserts.Equal("test", res.Token)
@@ -203,7 +203,7 @@ func TestFileSystem_GetUploadToken(t *testing.T) {
 		testHandler := new(FileHeaderMock)
 		testHandler.On("Token", testMock.Anything, int64(10), testMock.Anything).Return(serializer.UploadCredential{}, errors.New("error"))
 		fs.Handler = testHandler
-		_, err := fs.GetUploadToken(ctx, "/", 10, "123")
+		_, err := fs.CreateUploadSession(ctx, "/", 10, "123")
 		testHandler.AssertExpectations(t)
 		asserts.Error(err)
 	}
@@ -225,13 +225,13 @@ func TestFileSystem_UploadFromPath(t *testing.T) {
 
 	// 文件不存在
 	{
-		err := fs.UploadFromPath(ctx, "test/not_exist", "/")
+		err := fs.UploadFromPath(ctx, "test/not_exist", "/", true)
 		asserts.Error(err)
 	}
 
 	// 文存在,上传失败
 	{
-		err := fs.UploadFromPath(ctx, "tests/test.zip", "/")
+		err := fs.UploadFromPath(ctx, "tests/test.zip", "/", true)
 		asserts.Error(err)
 	}
 }

@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/auth"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/cos"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/onedrive"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/oss"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/s3"
-	"github.com/HFO4/cloudreve/pkg/request"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/cos"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/onedrive"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/oss"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/s3"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/gin-gonic/gin"
 	cossdk "github.com/tencentyun/cos-go-sdk-v5"
 )
@@ -149,9 +149,9 @@ func (service *PolicyService) AddCORS() serializer.Response {
 
 	switch policy.Type {
 	case "oss":
-		handler := oss.Driver{
-			Policy:     &policy,
-			HTTPClient: request.HTTPClient{},
+		handler, err := oss.NewDriver(&policy)
+		if err != nil {
+			return serializer.Err(serializer.CodeInternalSetting, "跨域策略添加失败", err)
 		}
 		if err := handler.CORS(); err != nil {
 			return serializer.Err(serializer.CodeInternalSetting, "跨域策略添加失败", err)
@@ -161,7 +161,7 @@ func (service *PolicyService) AddCORS() serializer.Response {
 		b := &cossdk.BaseURL{BucketURL: u}
 		handler := cos.Driver{
 			Policy:     &policy,
-			HTTPClient: request.HTTPClient{},
+			HTTPClient: request.NewClient(),
 			Client: cossdk.NewClient(b, &http.Client{
 				Transport: &cossdk.AuthorizationTransport{
 					SecretID:  policy.AccessKey,
@@ -169,13 +169,16 @@ func (service *PolicyService) AddCORS() serializer.Response {
 				},
 			}),
 		}
+
 		if err := handler.CORS(); err != nil {
 			return serializer.Err(serializer.CodeInternalSetting, "跨域策略添加失败", err)
 		}
 	case "s3":
-		handler := s3.Driver{
-			Policy: &policy,
+		handler, err := s3.NewDriver(&policy)
+		if err != nil {
+			return serializer.Err(serializer.CodeInternalSetting, "跨域策略添加失败", err)
 		}
+
 		if err := handler.CORS(); err != nil {
 			return serializer.Err(serializer.CodeInternalSetting, "跨域策略添加失败", err)
 		}
@@ -195,7 +198,7 @@ func (service *SlavePingService) Test() serializer.Response {
 
 	controller, _ := url.Parse("/api/v3/site/ping")
 
-	r := request.HTTPClient{}
+	r := request.NewClient()
 	res, err := r.Request(
 		"GET",
 		master.ResolveReference(controller).String(),
@@ -207,8 +210,12 @@ func (service *SlavePingService) Test() serializer.Response {
 		return serializer.ParamErr("从机无法向主机发送回调请求，请检查主机端 参数设置 - 站点信息 - 站点URL设置，并确保从机可以连接到此地址，"+err.Error(), nil)
 	}
 
-	if res.Data.(string) != conf.BackendVersion {
-		return serializer.ParamErr("Cloudreve版本不一致，主机："+res.Data.(string)+"，从机："+conf.BackendVersion, nil)
+	version := conf.BackendVersion
+	if conf.IsPro == "true" {
+		version += "-pro"
+	}
+	if res.Data.(string) != version {
+		return serializer.ParamErr("Cloudreve版本不一致，主机："+res.Data.(string)+"，从机："+version, nil)
 	}
 
 	return serializer.Response{}
@@ -229,7 +236,7 @@ func (service *SlaveTestService) Test() serializer.Response {
 	}
 	bodyByte, _ := json.Marshal(body)
 
-	r := request.HTTPClient{}
+	r := request.NewClient()
 	res, err := r.Request(
 		"POST",
 		slave.ResolveReference(controller).String(),
@@ -245,7 +252,7 @@ func (service *SlaveTestService) Test() serializer.Response {
 	}
 
 	if res.Code != 0 {
-		return serializer.ParamErr("成功接到从机，但是"+res.Msg, nil)
+		return serializer.ParamErr("成功接到从机，但是从机返回："+res.Msg, nil)
 	}
 
 	return serializer.Response{}

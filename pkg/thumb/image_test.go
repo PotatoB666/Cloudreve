@@ -2,13 +2,14 @@ package thumb
 
 import (
 	"fmt"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/stretchr/testify/assert"
 	"image"
 	"image/jpeg"
 	"os"
 	"testing"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/stretchr/testify/assert"
 )
 
 func CreateTestImage() *os.File {
@@ -83,6 +84,30 @@ func TestThumb_GetThumb(t *testing.T) {
 	asserts.NotPanics(func() {
 		thumb.GetThumb(10, 10)
 	})
+}
+
+func TestThumb_Thumbnail(t *testing.T) {
+	asserts := assert.New(t)
+	{
+		img := image.NewRGBA(image.Rect(0, 0, 500, 200))
+		thumb := Thumbnail(100, 100, img)
+		asserts.Equal(thumb.Bounds(), image.Rect(0, 0, 100, 40))
+	}
+	{
+		img := image.NewRGBA(image.Rect(0, 0, 200, 200))
+		thumb := Thumbnail(100, 100, img)
+		asserts.Equal(thumb.Bounds(), image.Rect(0, 0, 100, 100))
+	}
+	{
+		img := image.NewRGBA(image.Rect(0, 0, 500, 500))
+		thumb := Thumbnail(100, 100, img)
+		asserts.Equal(thumb.Bounds(), image.Rect(0, 0, 100, 100))
+	}
+	{
+		img := image.NewRGBA(image.Rect(0, 0, 200, 500))
+		thumb := Thumbnail(100, 100, img)
+		asserts.Equal(thumb.Bounds(), image.Rect(0, 0, 40, 100))
+	}
 }
 
 func TestThumb_Save(t *testing.T) {

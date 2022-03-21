@@ -1,10 +1,11 @@
 package model
 
 import (
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/jinzhu/gorm"
 	"net/url"
 	"strconv"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/jinzhu/gorm"
 )
 
 // Setting 系统设置模型
@@ -29,12 +30,16 @@ func GetSettingByName(name string) string {
 	if optionValue, ok := cache.Get(cacheKey); ok {
 		return optionValue.(string)
 	}
+
 	// 尝试数据库中查找
-	result := DB.Where("name = ?", name).First(&setting)
-	if result.Error == nil {
-		_ = cache.Set(cacheKey, setting.Value, -1)
-		return setting.Value
+	if DB != nil {
+		result := DB.Where("name = ?", name).First(&setting)
+		if result.Error == nil {
+			_ = cache.Set(cacheKey, setting.Value, -1)
+			return setting.Value
+		}
 	}
+
 	return ""
 }
 

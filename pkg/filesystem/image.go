@@ -3,13 +3,17 @@ package filesystem
 import (
 	"context"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/filesystem/response"
-	"github.com/HFO4/cloudreve/pkg/thumb"
-	"github.com/HFO4/cloudreve/pkg/util"
 	"strconv"
+	"sync"
+
+	"runtime"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/response"
+	"github.com/cloudreve/Cloudreve/v3/pkg/thumb"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 )
 
 /* ================
@@ -34,16 +38,51 @@ func (fs *FileSystem) GetThumb(ctx context.Context, id uint) (*response.ContentR
 	ctx = context.WithValue(ctx, fsctx.ThumbSizeCtx, [2]uint{w, h})
 	ctx = context.WithValue(ctx, fsctx.FileModelCtx, fs.FileTarget[0])
 	res, err := fs.Handler.Thumb(ctx, fs.FileTarget[0].SourceName)
+
+	// 本地存储策略出错时重新生成缩略图
+	if err != nil && fs.Policy.Type == "local" {
+		fs.GenerateThumbnail(ctx, &fs.FileTarget[0])
+		res, err = fs.Handler.Thumb(ctx, fs.FileTarget[0].SourceName)
+	}
+
 	if err == nil && conf.SystemConfig.Mode == "master" {
 		res.MaxAge = model.GetIntSetting("preview_timeout", 60)
 	}
 
-	// 出错时重新生成缩略图
-	if err != nil {
-		fs.GenerateThumbnail(ctx, &fs.FileTarget[0])
-	}
-
 	return res, err
+}
+
+// thumbPool 要使用的任务池
+var thumbPool *Pool
+var once sync.Once
+
+// Pool 带有最大配额的任务池
+type Pool struct {
+	// 容量
+	worker chan int
+}
+
+// Init 初始化任务池
+func getThumbWorker() *Pool {
+	once.Do(func() {
+		maxWorker := conf.ThumbConfig.MaxTaskCount
+		if maxWorker <= 0 {
+			maxWorker = runtime.GOMAXPROCS(0)
+		}
+		thumbPool = &Pool{
+			worker: make(chan int, maxWorker),
+		}
+		util.Log().Debug("初始化Thumb任务队列，WorkerNum = %d", maxWorker)
+	})
+	return thumbPool
+}
+func (pool *Pool) addWorker() {
+	pool.worker <- 1
+	util.Log().Debug("Thumb任务队列，addWorker")
+}
+func (pool *Pool) releaseWorker() {
+	util.Log().Debug("Thumb任务队列，releaseWorker")
+	<-pool.worker
 }
 
 // GenerateThumbnail 尝试为本地策略文件生成缩略图并获取图像原始大小
@@ -64,6 +103,8 @@ func (fs *FileSystem) GenerateThumbnail(ctx context.Context, file *model.File) {
 		return
 	}
 	defer source.Close()
+	getThumbWorker().addWorker()
+	defer getThumbWorker().releaseWorker()
 
 	image, err := thumb.NewThumbFromFile(source, file.Name)
 	if err != nil {
@@ -78,6 +119,12 @@ func (fs *FileSystem) GenerateThumbnail(ctx context.Context, file *model.File) {
 	image.GetThumb(fs.GenerateThumbnailSize(w, h))
 	// 保存到文件
 	err = image.Save(util.RelativePath(file.SourceName + conf.ThumbConfig.FileSuffix))
+	image = nil
+	if conf.ThumbConfig.GCAfterGen {
+		util.Log().Debug("GenerateThumbnail runtime.GC")
+		runtime.GC()
+	}
+
 	if err != nil {
 		util.Log().Warning("无法保存缩略图：%s", err)
 		return

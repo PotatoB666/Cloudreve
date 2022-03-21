@@ -3,31 +3,20 @@ package filesystem
 import (
 	"context"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/hashid"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/util"
 	"path"
 	"strings"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 )
 
 /* =================
 	 文件/目录管理
    =================
 */
-
-// Object 文件或者目录
-type Object struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Pic  string `json:"pic"`
-	Size uint64 `json:"size"`
-	Type string `json:"type"`
-	Date string `json:"date"`
-	Key  string `json:"key,omitempty"`
-}
 
 // Rename 重命名对象
 func (fs *FileSystem) Rename(ctx context.Context, dir, file []uint, new string) (err error) {
@@ -133,15 +122,12 @@ func (fs *FileSystem) Move(ctx context.Context, dirs, files []uint, src, dst str
 
 // Delete 递归删除对象, force 为 true 时强制删除文件记录，忽略物理删除是否成功
 func (fs *FileSystem) Delete(ctx context.Context, dirs, files []uint, force bool) error {
-	// 已删除的总容量,map用于去重
-	var deletedStorage = make(map[uint]uint64)
-	var totalStorage = make(map[uint]uint64)
 	// 已删除的文件ID
-	var deletedFileIDs = make([]uint, 0, len(fs.FileTarget))
+	var deletedFiles = make([]*model.File, 0, len(fs.FileTarget))
 	// 删除失败的文件的父目录ID
 
 	// 所有文件的ID
-	var allFileIDs = make([]uint, 0, len(fs.FileTarget))
+	var allFiles = make([]*model.File, 0, len(fs.FileTarget))
 
 	// 列出要删除的目录
 	if len(dirs) > 0 {
@@ -175,38 +161,35 @@ func (fs *FileSystem) Delete(ctx context.Context, dirs, files []uint, force bool
 	for i := 0; i < len(fs.FileTarget); i++ {
 		if !util.ContainsString(failed[fs.FileTarget[i].PolicyID], fs.FileTarget[i].SourceName) {
 			// 已成功删除的文件
-			deletedFileIDs = append(deletedFileIDs, fs.FileTarget[i].ID)
-			deletedStorage[fs.FileTarget[i].ID] = fs.FileTarget[i].Size
+			deletedFiles = append(deletedFiles, &fs.FileTarget[i])
 		}
+
 		// 全部文件
-		totalStorage[fs.FileTarget[i].ID] = fs.FileTarget[i].Size
-		allFileIDs = append(allFileIDs, fs.FileTarget[i].ID)
+		allFiles = append(allFiles, &fs.FileTarget[i])
 	}
 
 	// 如果强制删除，则将全部文件视为删除成功
 	if force {
-		deletedFileIDs = allFileIDs
-		deletedStorage = totalStorage
+		deletedFiles = allFiles
 	}
 
 	// 删除文件记录
-	err = model.DeleteFileByIDs(deletedFileIDs)
+	err = model.DeleteFiles(deletedFiles, fs.User.ID)
 	if err != nil {
 		return ErrDBDeleteObjects.WithError(err)
 	}
 
 	// 删除文件记录对应的分享记录
+	// TODO 先取消分享再删除文件
+	deletedFileIDs := make([]uint, len(deletedFiles))
+	for k, file := range deletedFiles {
+		deletedFileIDs[k] = file.ID
+	}
+
 	model.DeleteShareBySourceIDs(deletedFileIDs, false)
 
-	// 归还容量
-	var total uint64
-	for _, value := range deletedStorage {
-		total += value
-	}
-	fs.User.DeductionStorage(total)
-
 	// 如果文件全部删除成功，继续删除目录
-	if len(deletedFileIDs) == len(allFileIDs) {
+	if len(deletedFiles) == len(allFiles) {
 		var allFolderIDs = make([]uint, 0, len(fs.DirTarget))
 		for _, value := range fs.DirTarget {
 			allFolderIDs = append(allFolderIDs, value.ID)
@@ -220,7 +203,7 @@ func (fs *FileSystem) Delete(ctx context.Context, dirs, files []uint, force bool
 		model.DeleteShareBySourceIDs(allFolderIDs, true)
 	}
 
-	if notDeleted := len(fs.FileTarget) - len(deletedFileIDs); notDeleted > 0 {
+	if notDeleted := len(fs.FileTarget) - len(deletedFiles); notDeleted > 0 {
 		return serializer.NewError(
 			serializer.CodeNotFullySuccess,
 			fmt.Sprintf("有 %d 个文件未能成功删除", notDeleted),
@@ -264,7 +247,7 @@ func (fs *FileSystem) ListDeleteFiles(ctx context.Context, ids []uint) error {
 // pathProcessor为最终对象路径的处理钩子。
 // 有些情况下（如在分享页面列对象）时，
 // 路径需要截取掉被分享目录路径之前的部分。
-func (fs *FileSystem) List(ctx context.Context, dirPath string, pathProcessor func(string) string) ([]Object, error) {
+func (fs *FileSystem) List(ctx context.Context, dirPath string, pathProcessor func(string) string) ([]serializer.Object, error) {
 	// 获取父目录
 	isExist, folder := fs.IsPathExist(dirPath)
 	if !isExist {
@@ -287,7 +270,7 @@ func (fs *FileSystem) List(ctx context.Context, dirPath string, pathProcessor fu
 
 // ListPhysical 列出存储策略中的外部目录
 // TODO:测试
-func (fs *FileSystem) ListPhysical(ctx context.Context, dirPath string) ([]Object, error) {
+func (fs *FileSystem) ListPhysical(ctx context.Context, dirPath string) ([]serializer.Object, error) {
 	if err := fs.DispatchHandler(); fs.Policy == nil || err != nil {
 		return nil, ErrUnknownPolicyType
 	}
@@ -317,7 +300,7 @@ func (fs *FileSystem) ListPhysical(ctx context.Context, dirPath string) ([]Objec
 	return fs.listObjects(ctx, dirPath, nil, folders, nil), nil
 }
 
-func (fs *FileSystem) listObjects(ctx context.Context, parent string, files []model.File, folders []model.Folder, pathProcessor func(string) string) []Object {
+func (fs *FileSystem) listObjects(ctx context.Context, parent string, files []model.File, folders []model.Folder, pathProcessor func(string) string) []serializer.Object {
 	// 分享文件的ID
 	shareKey := ""
 	if key, ok := ctx.Value(fsctx.ShareKeyCtx).(string); ok {
@@ -325,7 +308,7 @@ func (fs *FileSystem) listObjects(ctx context.Context, parent string, files []mo
 	}
 
 	// 汇总处理结果
-	objects := make([]Object, 0, len(files)+len(folders))
+	objects := make([]serializer.Object, 0, len(files)+len(folders))
 
 	// 所有对象的父目录
 	var processedPath string
@@ -341,14 +324,14 @@ func (fs *FileSystem) listObjects(ctx context.Context, parent string, files []mo
 			}
 		}
 
-		objects = append(objects, Object{
+		objects = append(objects, serializer.Object{
 			ID:   hashid.HashID(subFolder.ID, hashid.FolderID),
 			Name: subFolder.Name,
 			Path: processedPath,
 			Pic:  "",
 			Size: 0,
 			Type: "dir",
-			Date: subFolder.CreatedAt.Format("2006-01-02 15:04:05"),
+			Date: subFolder.CreatedAt,
 		})
 	}
 
@@ -361,19 +344,22 @@ func (fs *FileSystem) listObjects(ctx context.Context, parent string, files []mo
 			}
 		}
 
-		newFile := Object{
-			ID:   hashid.HashID(file.ID, hashid.FileID),
-			Name: file.Name,
-			Path: processedPath,
-			Pic:  file.PicInfo,
-			Size: file.Size,
-			Type: "file",
-			Date: file.CreatedAt.Format("2006-01-02 15:04:05"),
+		if file.UploadSessionID == nil {
+			newFile := serializer.Object{
+				ID:            hashid.HashID(file.ID, hashid.FileID),
+				Name:          file.Name,
+				Path:          processedPath,
+				Pic:           file.PicInfo,
+				Size:          file.Size,
+				Type:          "file",
+				Date:          file.CreatedAt,
+				SourceEnabled: file.GetPolicy().IsOriginLinkEnable,
+			}
+			if shareKey != "" {
+				newFile.Key = shareKey
+			}
+			objects = append(objects, newFile)
 		}
-		if shareKey != "" {
-			newFile.Key = shareKey
-		}
-		objects = append(objects, newFile)
 	}
 
 	return objects
@@ -402,8 +388,8 @@ func (fs *FileSystem) CreateDirectory(ctx context.Context, fullPath string) (*mo
 	isExist, parent := fs.IsPathExist(base)
 	if !isExist {
 		// 递归创建父目录
-		if _, ok := ctx.Value(fsctx.IgnoreConflictCtx).(bool); !ok {
-			ctx = context.WithValue(ctx, fsctx.IgnoreConflictCtx, true)
+		if _, ok := ctx.Value(fsctx.IgnoreDirectoryConflictCtx).(bool); !ok {
+			ctx = context.WithValue(ctx, fsctx.IgnoreDirectoryConflictCtx, true)
 		}
 		newParent, err := fs.CreateDirectory(ctx, base)
 		if err != nil {
@@ -426,7 +412,7 @@ func (fs *FileSystem) CreateDirectory(ctx context.Context, fullPath string) (*mo
 	_, err := newFolder.Create()
 
 	if err != nil {
-		if _, ok := ctx.Value(fsctx.IgnoreConflictCtx).(bool); !ok {
+		if _, ok := ctx.Value(fsctx.IgnoreDirectoryConflictCtx).(bool); !ok {
 			return nil, ErrFolderExisted
 		}
 

@@ -2,12 +2,13 @@ package model
 
 import (
 	"errors"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/jinzhu/gorm"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFolder_Create(t *testing.T) {
@@ -492,7 +493,8 @@ func TestFolder_MoveOrCopyFolderTo_Move(t *testing.T) {
 	}
 	// 目标目录
 	dstFolder := Folder{
-		Model: gorm.Model{ID: 10},
+		Model:   gorm.Model{ID: 10},
+		OwnerID: 1,
 	}
 
 	// 成功
@@ -505,6 +507,12 @@ func TestFolder_MoveOrCopyFolderTo_Move(t *testing.T) {
 		err := parFolder.MoveFolderTo([]uint{1, 2}, &dstFolder)
 		asserts.NoError(mock.ExpectationsWereMet())
 		asserts.NoError(err)
+	}
+
+	// 移动自己到自己内部，失败
+	{
+		err := parFolder.MoveFolderTo([]uint{10, 2}, &dstFolder)
+		asserts.Error(err)
 	}
 }
 
@@ -528,4 +536,38 @@ func TestFolder_FileInfoInterface(t *testing.T) {
 	asserts.Equal(time.Date(2019, 12, 21, 12, 40, 0, 0, time.UTC), folder.ModTime())
 	asserts.True(folder.IsDir())
 	asserts.Equal("/test", folder.GetPosition())
+}
+
+func TestTraceRoot(t *testing.T) {
+	asserts := assert.New(t)
+	var parentId uint
+	parentId = 5
+	folder := Folder{
+		ParentID: &parentId,
+		OwnerID:  1,
+		Name:     "test_name",
+	}
+
+	// 成功
+	{
+		mock.ExpectQuery("SELECT(.+)").WithArgs(5, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "name", "parent_id"}).AddRow(5, "parent", 1))
+		mock.ExpectQuery("SELECT(.+)").WithArgs(1, 0).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(5, "/"))
+		asserts.NoError(folder.TraceRoot())
+		asserts.Equal("/parent", folder.Position)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 出现错误
+	// 成功
+	{
+		mock.ExpectQuery("SELECT(.+)").WithArgs(5, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "name", "parent_id"}).AddRow(5, "parent", 1))
+		mock.ExpectQuery("SELECT(.+)").WithArgs(1, 0).
+			WillReturnError(errors.New("error"))
+		asserts.Error(folder.TraceRoot())
+		asserts.Equal("parent", folder.Position)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
 }

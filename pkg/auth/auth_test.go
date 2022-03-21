@@ -1,12 +1,13 @@
 package auth
 
 import (
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSignURI(t *testing.T) {
@@ -69,7 +70,7 @@ func TestSignRequest(t *testing.T) {
 			strings.NewReader("I am body."),
 		)
 		asserts.NoError(err)
-		req.Header["X-Policy"] = []string{"I am Policy"}
+		req.Header["X-Cr-Policy"] = []string{"I am Policy"}
 		req = SignRequest(General, req, 10)
 		asserts.NotEmpty(req.Header["Authorization"])
 	}
@@ -78,6 +79,19 @@ func TestSignRequest(t *testing.T) {
 func TestCheckRequest(t *testing.T) {
 	asserts := assert.New(t)
 	General = HMACAuth{SecretKey: []byte(util.RandStringRunes(256))}
+
+	// 缺少请求头
+	{
+		req, err := http.NewRequest(
+			"POST",
+			"http://127.0.0.1/api/v3/upload",
+			strings.NewReader("I am body."),
+		)
+		asserts.NoError(err)
+		err = CheckRequest(General, req)
+		asserts.Error(err)
+		asserts.Equal(ErrAuthHeaderMissing, err)
+	}
 
 	// 非上传请求 验证成功
 	{
@@ -100,7 +114,7 @@ func TestCheckRequest(t *testing.T) {
 			strings.NewReader("I am body."),
 		)
 		asserts.NoError(err)
-		req.Header["X-Policy"] = []string{"I am Policy"}
+		req.Header["X-Cr-Policy"] = []string{"I am Policy"}
 		req = SignRequest(General, req, 0)
 		err = CheckRequest(General, req)
 		asserts.NoError(err)

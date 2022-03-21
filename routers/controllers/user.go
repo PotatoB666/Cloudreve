@@ -3,13 +3,14 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/authn"
-	"github.com/HFO4/cloudreve/pkg/request"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/HFO4/cloudreve/pkg/thumb"
-	"github.com/HFO4/cloudreve/pkg/util"
-	"github.com/HFO4/cloudreve/service/user"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/authn"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/cloudreve/Cloudreve/v3/pkg/thumb"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
+	"github.com/cloudreve/Cloudreve/v3/service/user"
 	"github.com/duo-labs/webauthn/webauthn"
 	"github.com/gin-gonic/gin"
 )
@@ -17,9 +18,9 @@ import (
 // StartLoginAuthn 开始注册WebAuthn登录
 func StartLoginAuthn(c *gin.Context) {
 	userName := c.Param("username")
-	expectedUser, err := model.GetUserByEmail(userName)
+	expectedUser, err := model.GetActiveUserByEmail(userName)
 	if err != nil {
-		c.JSON(200, serializer.Err(401, "用户不存在", err))
+		c.JSON(200, serializer.Err(serializer.CodeNotFound, "用户不存在", err))
 		return
 	}
 
@@ -51,9 +52,9 @@ func StartLoginAuthn(c *gin.Context) {
 // FinishLoginAuthn 完成注册WebAuthn登录
 func FinishLoginAuthn(c *gin.Context) {
 	userName := c.Param("username")
-	expectedUser, err := model.GetUserByEmail(userName)
+	expectedUser, err := model.GetActiveUserByEmail(userName)
 	if err != nil {
-		c.JSON(200, serializer.Err(401, "用户邮箱或密码错误", err))
+		c.JSON(200, serializer.Err(serializer.CodeCredentialInvalid, "用户邮箱或密码错误", err))
 		return
 	}
 
@@ -71,7 +72,7 @@ func FinishLoginAuthn(c *gin.Context) {
 	_, err = instance.FinishLogin(expectedUser, sessionData, c.Request)
 
 	if err != nil {
-		c.JSON(200, serializer.Err(401, "登录验证失败", err))
+		c.JSON(200, serializer.Err(serializer.CodeCredentialInvalid, "登录验证失败", err))
 		return
 	}
 
@@ -348,6 +349,8 @@ func UpdateOption(c *gin.Context) {
 			subService = &user.DeleteWebAuthn{}
 		case "theme":
 			subService = &user.ThemeChose{}
+		default:
+			subService = &user.ChangerNick{}
 		}
 
 		subErr = c.ShouldBindJSON(subService)

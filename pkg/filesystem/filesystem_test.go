@@ -1,15 +1,19 @@
 package filesystem
 
 import (
+	"github.com/cloudreve/Cloudreve/v3/pkg/cluster"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/shadow/masterinslave"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/shadow/slaveinmaster"
+	"net/http/httptest"
+
 	"github.com/DATA-DOG/go-sqlmock"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/local"
-	"github.com/HFO4/cloudreve/pkg/filesystem/driver/remote"
-	"github.com/HFO4/cloudreve/pkg/serializer"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/local"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver/remote"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"net/http/httptest"
 
 	"testing"
 )
@@ -100,6 +104,14 @@ func TestDispatchHandler(t *testing.T) {
 	asserts.NoError(err)
 
 	fs.Policy = &model.Policy{Type: "onedrive"}
+	err = fs.DispatchHandler()
+	asserts.NoError(err)
+
+	fs.Policy = &model.Policy{Type: "cos"}
+	err = fs.DispatchHandler()
+	asserts.NoError(err)
+
+	fs.Policy = &model.Policy{Type: "s3"}
 	err = fs.DispatchHandler()
 	asserts.NoError(err)
 }
@@ -255,5 +267,42 @@ func TestFileSystem_SetTargetByInterface(t *testing.T) {
 		asserts.NoError(fs.SetTargetByInterface(&model.File{}))
 		asserts.Len(fs.DirTarget, 1)
 		asserts.Len(fs.FileTarget, 1)
+	}
+}
+
+func TestFileSystem_SwitchToSlaveHandler(t *testing.T) {
+	a := assert.New(t)
+	fs := FileSystem{
+		User: &model.User{},
+	}
+	mockNode := &cluster.MasterNode{
+		Model: &model.Node{},
+	}
+	fs.SwitchToSlaveHandler(mockNode)
+	a.IsType(&slaveinmaster.Driver{}, fs.Handler)
+}
+
+func TestFileSystem_SwitchToShadowHandler(t *testing.T) {
+	a := assert.New(t)
+	fs := FileSystem{
+		User:   &model.User{},
+		Policy: &model.Policy{},
+	}
+	mockNode := &cluster.MasterNode{
+		Model: &model.Node{},
+	}
+
+	// local to remote
+	{
+		fs.Policy.Type = "local"
+		fs.SwitchToShadowHandler(mockNode, "", "")
+		a.IsType(&masterinslave.Driver{}, fs.Handler)
+	}
+
+	// onedrive
+	{
+		fs.Policy.Type = "onedrive"
+		fs.SwitchToShadowHandler(mockNode, "", "")
+		a.IsType(&masterinslave.Driver{}, fs.Handler)
 	}
 }

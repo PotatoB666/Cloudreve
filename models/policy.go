@@ -3,15 +3,14 @@ package model
 import (
 	"encoding/gob"
 	"encoding/json"
-	"net/url"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/util"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/jinzhu/gorm"
 )
 
@@ -36,6 +35,7 @@ type Policy struct {
 
 	// 数据库忽略字段
 	OptionsSerialized PolicyOption `gorm:"-"`
+	MasterID          string       `gorm:"-"`
 }
 
 // PolicyOption 非公有的存储策略属性
@@ -46,12 +46,20 @@ type PolicyOption struct {
 	FileType []string `json:"file_type"`
 	// MimeType
 	MimeType string `json:"mimetype"`
-
-	// OdRedirect Onedrive重定向地址
+	// OdRedirect Onedrive 重定向地址
 	OdRedirect string `json:"od_redirect,omitempty"`
-
+	// OdProxy Onedrive 反代地址
+	OdProxy string `json:"od_proxy,omitempty"`
+	// OdDriver OneDrive 驱动器定位符
+	OdDriver string `json:"od_driver,omitempty"`
 	// Region 区域代码
-	Region string `json:"region"`
+	Region string `json:"region,omitempty"`
+	// ServerSideEndpoint 服务端请求使用的 Endpoint，为空时使用 Policy.Server 字段
+	ServerSideEndpoint string `json:"server_side_endpoint,omitempty"`
+	// 分片上传的分片大小
+	ChunkSize uint64 `json:"chunk_size,omitempty"`
+	// 分片上传时是否需要预留空间
+	PlaceholderWithSize bool `json:"placeholder_with_size,omitempty"`
 }
 
 var thumbSuffix = map[string][]string{
@@ -142,7 +150,7 @@ func (policy *Policy) GeneratePath(uid uint, origin string) string {
 func (policy *Policy) GenerateFileName(uid uint, origin string) string {
 	// 未开启自动重命名时，直接返回原始文件名
 	if !policy.AutoRename {
-		return policy.getOriginNameRule(origin)
+		return origin
 	}
 
 	fileRule := policy.FileNameRule
@@ -161,9 +169,8 @@ func (policy *Policy) GenerateFileName(uid uint, origin string) string {
 		"{hour}":           time.Now().Format("15"),
 		"{minute}":         time.Now().Format("04"),
 		"{second}":         time.Now().Format("05"),
+		"{originname}":     origin,
 	}
-
-	replaceTable["{originname}"] = policy.getOriginNameRule(origin)
 
 	fileRule = util.Replace(replaceTable, fileRule)
 	return fileRule
@@ -208,18 +215,7 @@ func (policy *Policy) IsThumbExist(name string) bool {
 
 // IsTransitUpload 返回此策略上传给定size文件时是否需要服务端中转
 func (policy *Policy) IsTransitUpload(size uint64) bool {
-	if policy.Type == "local" {
-		return true
-	}
-	if policy.Type == "onedrive" && size < 4*1024*1024 {
-		return true
-	}
-	return false
-}
-
-// IsPathGenerateNeeded 返回此策略是否需要在生成上传凭证时生成存储路径
-func (policy *Policy) IsPathGenerateNeeded() bool {
-	return policy.Type != "remote"
+	return policy.Type == "local"
 }
 
 // IsThumbGenerateNeeded 返回此策略是否需要在上传后生成缩略图
@@ -227,40 +223,34 @@ func (policy *Policy) IsThumbGenerateNeeded() bool {
 	return policy.Type == "local"
 }
 
+// IsUploadPlaceholderWithSize 返回此策略创建上传会话时是否需要预留空间
+func (policy *Policy) IsUploadPlaceholderWithSize() bool {
+	if policy.Type == "remote" {
+		return true
+	}
+
+	if util.ContainsString([]string{"onedrive", "oss", "qiniu", "cos", "s3"}, policy.Type) {
+		return policy.OptionsSerialized.PlaceholderWithSize
+	}
+
+	return false
+}
+
 // CanStructureBeListed 返回存储策略是否能被前台列物理目录
 func (policy *Policy) CanStructureBeListed() bool {
 	return policy.Type != "local" && policy.Type != "remote"
 }
 
-// GetUploadURL 获取文件上传服务API地址
-func (policy *Policy) GetUploadURL() string {
-	server, err := url.Parse(policy.Server)
-	if err != nil {
-		return policy.Server
-	}
-
-	var controller *url.URL
-	switch policy.Type {
-	case "local", "onedrive":
-		return "/api/v3/file/upload"
-	case "remote":
-		controller, _ = url.Parse("/api/v3/slave/upload")
-	case "oss":
-		return "https://" + policy.BucketName + "." + policy.Server
-	case "cos":
-		return policy.Server
-	case "upyun":
-		return "https://v0.api.upyun.com/" + policy.BucketName
-	default:
-		controller, _ = url.Parse("")
-	}
-	return server.ResolveReference(controller).String()
+// SaveAndClearCache 更新并清理缓存
+func (policy *Policy) SaveAndClearCache() error {
+	err := DB.Save(policy).Error
+	policy.ClearCache()
+	return err
 }
 
-// UpdateAccessKey 更新 AccessKey
-func (policy *Policy) UpdateAccessKey(key string) error {
-	policy.AccessKey = key
-	err := DB.Save(policy).Error
+// SaveAndClearCache 更新并清理缓存
+func (policy *Policy) UpdateAccessKeyAndClearCache(s string) error {
+	err := DB.Model(policy).UpdateColumn("access_key", s).Error
 	policy.ClearCache()
 	return err
 }

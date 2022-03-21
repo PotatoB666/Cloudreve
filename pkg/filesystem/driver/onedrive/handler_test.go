@@ -2,14 +2,8 @@ package onedrive
 
 import (
 	"context"
-	"github.com/DATA-DOG/go-sqlmock"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
-	"github.com/HFO4/cloudreve/pkg/request"
-	"github.com/HFO4/cloudreve/pkg/serializer"
-	"github.com/stretchr/testify/assert"
-	testMock "github.com/stretchr/testify/mock"
+	"fmt"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -17,6 +11,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
+	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
+	"github.com/stretchr/testify/assert"
+	testMock "github.com/stretchr/testify/mock"
 )
 
 func TestDriver_Token(t *testing.T) {
@@ -33,7 +36,7 @@ func TestDriver_Token(t *testing.T) {
 	// 无法获取文件路径
 	{
 		ctx := context.WithValue(context.Background(), fsctx.FileSizeCtx, uint64(10))
-		res, err := handler.Token(ctx, 10, "key")
+		res, err := handler.Token(ctx, 10, "key", nil)
 		asserts.Error(err)
 		asserts.Equal(serializer.UploadCredential{}, res)
 	}
@@ -41,7 +44,7 @@ func TestDriver_Token(t *testing.T) {
 	// 无法获取文件大小
 	{
 		ctx := context.WithValue(context.Background(), fsctx.SavePathCtx, "/123")
-		res, err := handler.Token(ctx, 10, "key")
+		res, err := handler.Token(ctx, 10, "key", nil)
 		asserts.Error(err)
 		asserts.Equal(serializer.UploadCredential{}, res)
 	}
@@ -50,7 +53,7 @@ func TestDriver_Token(t *testing.T) {
 	{
 		ctx := context.WithValue(context.Background(), fsctx.SavePathCtx, "/123")
 		ctx = context.WithValue(ctx, fsctx.FileSizeCtx, uint64(10))
-		res, err := handler.Token(ctx, 10, "key")
+		res, err := handler.Token(ctx, 10, "key", nil)
 		asserts.NoError(err)
 		asserts.Equal(serializer.UploadCredential{}, res)
 	}
@@ -77,7 +80,7 @@ func TestDriver_Token(t *testing.T) {
 		handler.Client.Request = clientMock
 		ctx := context.WithValue(context.Background(), fsctx.SavePathCtx, "/123")
 		ctx = context.WithValue(ctx, fsctx.FileSizeCtx, uint64(20*1024*1024))
-		res, err := handler.Token(ctx, 10, "key")
+		res, err := handler.Token(ctx, 10, "key", nil)
 		asserts.Error(err)
 		asserts.Equal(serializer.UploadCredential{}, res)
 	}
@@ -111,7 +114,7 @@ func TestDriver_Token(t *testing.T) {
 			time.Sleep(time.Duration(1) * time.Second)
 			FinishCallback("key")
 		}()
-		res, err := handler.Token(ctx, 10, "key")
+		res, err := handler.Token(ctx, 10, "key", nil)
 		asserts.NoError(err)
 		asserts.Equal("123321", res.Policy)
 	}
@@ -133,7 +136,7 @@ func TestDriver_Source(t *testing.T) {
 
 	// 失败
 	{
-		res, err := handler.Source(context.Background(), "123.jpg", url.URL{}, 0, true, 0)
+		res, err := handler.Source(context.Background(), "123.jpg", url.URL{}, 1, true, 0)
 		asserts.Error(err)
 		asserts.Empty(res)
 	}
@@ -142,8 +145,23 @@ func TestDriver_Source(t *testing.T) {
 	{
 		handler.Client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
 		handler.Client.Credential.AccessToken = "1"
-		cache.Set("onedrive_source_0_123.jpg", "res", 0)
+		cache.Set("onedrive_source_0_123.jpg", "res", 1)
 		res, err := handler.Source(context.Background(), "123.jpg", url.URL{}, 0, true, 0)
+		cache.Deletes([]string{"0_123.jpg"}, "onedrive_source_")
+		asserts.NoError(err)
+		asserts.Equal("res", res)
+	}
+
+	// 命中缓存 上下文存在文件 成功
+	{
+		file := model.File{}
+		file.ID = 1
+		file.UpdatedAt = time.Now()
+		ctx := context.WithValue(context.Background(), fsctx.FileModelCtx, file)
+		handler.Client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
+		handler.Client.Credential.AccessToken = "1"
+		cache.Set(fmt.Sprintf("onedrive_source_file_%d_1", file.UpdatedAt.Unix()), "res", 0)
+		res, err := handler.Source(ctx, "123.jpg", url.URL{}, 1, true, 0)
 		cache.Deletes([]string{"0_123.jpg"}, "onedrive_source_")
 		asserts.NoError(err)
 		asserts.Equal("res", res)
@@ -168,9 +186,24 @@ func TestDriver_Source(t *testing.T) {
 		})
 		handler.Client.Request = clientMock
 		handler.Client.Credential.AccessToken = "1"
-		res, err := handler.Source(context.Background(), "123.jpg", url.URL{}, 0, true, 0)
+		res, err := handler.Source(context.Background(), "123.jpg", url.URL{}, 1, true, 0)
 		asserts.NoError(err)
 		asserts.Equal("123321", res)
+	}
+
+	// 成功 永久直链
+	{
+		file := model.File{}
+		file.ID = 1
+		file.Name = "123.jpg"
+		file.UpdatedAt = time.Now()
+		ctx := context.WithValue(context.Background(), fsctx.FileModelCtx, file)
+		handler.Client.Credential.ExpiresIn = time.Now().Add(time.Duration(100) * time.Hour).Unix()
+		auth.General = auth.HMACAuth{}
+		handler.Client.Credential.AccessToken = "1"
+		res, err := handler.Source(ctx, "123.jpg", url.URL{}, 0, true, 0)
+		asserts.NoError(err)
+		asserts.Contains(res, "/api/v3/file/source/1/123.jpg?sign")
 	}
 }
 

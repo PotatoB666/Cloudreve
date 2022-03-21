@@ -2,15 +2,16 @@ package model
 
 import (
 	"errors"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/HFO4/cloudreve/pkg/cache"
-	"github.com/HFO4/cloudreve/pkg/conf"
-	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm"
-	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestShare_Create(t *testing.T) {
@@ -181,18 +182,6 @@ func TestShare_CanBeDownloadBy(t *testing.T) {
 			Group: Group{
 				OptionsSerialized: GroupOption{
 					ShareDownload: false,
-				},
-			},
-		}
-		asserts.Error(share.CanBeDownloadBy(user))
-	}
-
-	// 未登录，需要积分
-	{
-		user := &User{
-			Group: Group{
-				OptionsSerialized: GroupOption{
-					ShareDownload: true,
 				},
 			},
 		}

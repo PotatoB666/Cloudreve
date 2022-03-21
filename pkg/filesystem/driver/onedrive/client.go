@@ -2,8 +2,10 @@ package onedrive
 
 import (
 	"errors"
-	model "github.com/HFO4/cloudreve/models"
-	"github.com/HFO4/cloudreve/pkg/request"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cluster"
+
+	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/request"
 )
 
 var (
@@ -27,7 +29,8 @@ type Client struct {
 	ClientSecret string
 	Redirect     string
 
-	Request request.Client
+	Request           request.Client
+	ClusterController cluster.Controller
 }
 
 // Endpoints OneDrive客户端相关设置
@@ -36,23 +39,30 @@ type Endpoints struct {
 	OAuthEndpoints *oauthEndpoint
 	EndpointURL    string // 接口请求的基URL
 	isInChina      bool   // 是否为世纪互联
+	DriverResource string // 要使用的驱动器
 }
 
 // NewClient 根据存储策略获取新的client
 func NewClient(policy *model.Policy) (*Client, error) {
 	client := &Client{
 		Endpoints: &Endpoints{
-			OAuthURL:    policy.BaseURL,
-			EndpointURL: policy.Server,
+			OAuthURL:       policy.BaseURL,
+			EndpointURL:    policy.Server,
+			DriverResource: policy.OptionsSerialized.OdDriver,
 		},
 		Credential: &Credential{
 			RefreshToken: policy.AccessKey,
 		},
-		Policy:       policy,
-		ClientID:     policy.BucketName,
-		ClientSecret: policy.SecretKey,
-		Redirect:     policy.OptionsSerialized.OdRedirect,
-		Request:      request.HTTPClient{},
+		Policy:            policy,
+		ClientID:          policy.BucketName,
+		ClientSecret:      policy.SecretKey,
+		Redirect:          policy.OptionsSerialized.OdRedirect,
+		Request:           request.NewClient(),
+		ClusterController: cluster.DefaultController,
+	}
+
+	if client.Endpoints.DriverResource == "" {
+		client.Endpoints.DriverResource = "me/drive"
 	}
 
 	oauthBase := client.getOAuthEndpoint()
